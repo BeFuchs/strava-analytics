@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ride Analytics — Training Report</title>
+<script>{{ plotlyjs | safe }}</script>
+<style>
+  :root {
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --border: rgba(11, 11, 11, 0.10);
+    --grid: #e1e0d9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.45;
+  }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 20px 56px; }
+  header h1 { font-size: 26px; margin: 0 0 4px; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 8px; }
+  .tile {
+    flex: 1 1 150px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .tile .label { font-size: 13px; color: var(--ink-2); }
+  .tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  section { margin-top: 32px; }
+  h2 { font-size: 17px; margin: 0 0 4px; }
+  .section-note { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    overflow-x: auto;
+  }
+  .empty { color: var(--muted); font-size: 14px; padding: 20px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 8px 10px; text-align: right; font-variant-numeric: tabular-nums; }
+  th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
+  thead th {
+    color: var(--ink-2);
+    font-weight: 600;
+    border-bottom: 1px solid var(--grid);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  thead th::after { content: "​"; font-size: 10px; color: var(--muted); }
+  thead th.asc::after { content: " ▲"; }
+  thead th.desc::after { content: " ▼"; }
+  tbody tr { border-bottom: 1px solid var(--grid); }
+  tbody tr:last-child { border-bottom: none; }
+  td.source { color: var(--ink-2); font-size: 13px; }
+  .footnote { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Ride Analytics — Training Report</h1>
+    <p>{{ totals.period }} · generated {{ generated }} · FTP {{ config.ftp_watts }} W ({{ ftp_wkg }} W/kg)</p>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><div class="label">Rides</div><div class="value">{{ totals.rides }}</div></div>
+    <div class="tile"><div class="label">Distance</div><div class="value">{{ totals.distance }}</div></div>
+    <div class="tile"><div class="label">Moving time</div><div class="value">{{ totals.moving_time }}</div></div>
+    <div class="tile"><div class="label">Total TSS</div><div class="value">{{ totals.tss }}</div></div>
+  </div>
+
+  <section>
+    <h2>Training load</h2>
+    <p class="section-note">Fitness (CTL), fatigue (ATL) and form (TSB) from daily training stress.</p>
+    <div class="card">
+      {% if pmc_div %}{{ pmc_div | safe }}{% else %}<p class="empty">No TSS data — rides carry neither power nor heart rate.</p>{% endif %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Power curve</h2>
+    <p class="section-note">
+      Best average power across all rides.
+      {% if ftp_estimate %}Estimated FTP: {{ ftp_estimate }} — best 20&nbsp;min × 0.95; the configured FTP stays authoritative for TSS/IF.{% endif %}
+    </p>
+    <div class="card">
+      {% if power_curve_div %}{{ power_curve_div | safe }}{% else %}<p class="empty">No power data in this export.</p>{% endif %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Time in zones</h2>
+    <p class="section-note">Share of riding time per power zone (Coggan, %FTP) and heart-rate zone (%threshold HR).</p>
+    <div class="card">
+      {% if power_zones_div %}{{ power_zones_div | safe }}{% else %}<p class="empty">No power data in this export.</p>{% endif %}
+    </div>
+    <div class="card" style="margin-top: 12px;">
+      {% if hr_zones_div %}{{ hr_zones_div | safe }}{% else %}<p class="empty">No heart-rate data in this export.</p>{% endif %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Rides</h2>
+    <p class="section-note">Click a column header to sort.</p>
+    <div class="card">
+      <table id="rides">
+        <thead>
+          <tr>
+            <th>Date</th><th>File</th><th>km</th><th>Moving</th>
+            <th>NP (W)</th><th>IF</th><th>TSS</th><th>Ø HR</th><th>Max HR</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.date }}</td>
+            <td class="source">{{ row.source }}</td>
+            <td>{{ row.distance }}</td>
+            <td>{{ row.duration }}</td>
+            <td>{{ row.np }}</td>
+            <td>{{ row['if'] }}</td>
+            <td>{{ row.tss }}</td>
+            <td>{{ row.avg_hr }}</td>
+            <td>{{ row.max_hr }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if any_estimated_tss %}<p class="footnote">* TSS estimated from heart rate (ride without power data).</p>{% endif %}
+    </div>
+  </section>
+</main>
+<script>
+  // Minimal column sort: numeric where possible, else text; duration hh:mm:ss aware.
+  document.querySelectorAll("#rides thead th").forEach((th, col) => {
+    th.addEventListener("click", () => {
+      const tbody = th.closest("table").querySelector("tbody");
+      const asc = !th.classList.contains("asc");
+      th.closest("tr").querySelectorAll("th").forEach(h => h.classList.remove("asc", "desc"));
+      th.classList.add(asc ? "asc" : "desc");
+      const key = (tr) => {
+        const text = tr.children[col].textContent.trim().replace("*", "");
+        if (/^\d+:\d{2}:\d{2}$/.test(text)) {
+          const [h, m, s] = text.split(":").map(Number);
+          return h * 3600 + m * 60 + s;
+        }
+        const num = parseFloat(text.replace(",", ""));
+        return Number.isNaN(num) ? text : num;
+      };
+      [...tbody.rows]
+        .sort((a, b) => {
+          const [ka, kb] = [key(a), key(b)];
+          const cmp = typeof ka === "number" && typeof kb === "number"
+            ? ka - kb : String(ka).localeCompare(String(kb));
+          return asc ? cmp : -cmp;
+        })
+        .forEach(tr => tbody.appendChild(tr));
+    });
+  });
+</script>
+</body>
+</html>
