@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Project
+data/*
+!data/.gitkeep
+config.yaml
+*.html
+
+# Tooling / prompts (not part of the project)
+CLAUDE.md
+CLAUDE_CODE_BRIEFING.md
+.claude/
+
+# macOS
+.DS_Store

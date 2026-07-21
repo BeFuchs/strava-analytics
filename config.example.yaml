@@ -1,0 +1,7 @@
+# Athlete profile used for all power/HR based metrics.
+# Copy to config.yaml and adjust to your own values (config.yaml is gitignored).
+athlete:
+  ftp_watts: 250            # Functional Threshold Power
+  threshold_hr: 170         # lactate threshold heart rate (for hrTSS & HR zones)
+  weight_kg: 75             # for W/kg figures
+  max_hr: 190

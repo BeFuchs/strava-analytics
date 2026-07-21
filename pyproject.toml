@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ride-analytics"
+version = "0.1.0"
+description = "Local-first CLI that analyzes Strava/Garmin FIT exports and builds a self-contained HTML report"
+license = "MIT"
+authors = [{ name = "Benedict Fuchs" }]
+requires-python = ">=3.11"
+dependencies = [
+    "fitparse==1.2.0",
+    "pandas==3.0.3",
+    "numpy==2.5.1",
+    "plotly==6.9.0",
+    "jinja2==3.1.6",
+    "click==8.4.2",
+    "PyYAML==6.0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.15.22",
+]
+
+[project.scripts]
+ride-analytics = "ride_analytics.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"ride_analytics.report" = ["templates/*.j2"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
