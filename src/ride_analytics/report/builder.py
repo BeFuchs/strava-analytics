@@ -50,7 +50,16 @@ _LIGHT_RAMP_STEPS = 2
 
 _FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
 
-_WINDOW_LABELS = {5: "5s", 15: "15s", 30: "30s", 60: "1m", 300: "5m", 480: "8m", 1200: "20m", 3600: "60m"}
+_WINDOW_LABELS = {
+    5: "5s",
+    15: "15s",
+    30: "30s",
+    60: "1m",
+    300: "5m",
+    480: "8m",
+    1200: "20m",
+    3600: "60m",
+}
 
 
 @dataclass(frozen=True)
@@ -122,7 +131,9 @@ def render_report(data: ReportData, config: AthleteConfig, out_path: str | Path)
         ftp_estimate=_fmt_ftp_estimate(data.ftp_estimate, config),
         any_estimated_tss=any(a.metrics.tss_estimated for a in data.rides),
         pmc_div=_to_div(_pmc_figure(data.pmc)) if not data.pmc.empty else None,
-        power_curve_div=_to_div(_power_curve_figure(data.power_curve)) if data.power_curve else None,
+        power_curve_div=_to_div(_power_curve_figure(data.power_curve))
+        if data.power_curve
+        else None,
         power_zones_div=(
             _to_div(_zones_figure(data.power_zones, _POWER_RAMP)) if data.power_zones else None
         ),
@@ -242,7 +253,13 @@ def _pmc_figure(pmc: pd.DataFrame) -> go.Figure:
         )
     _base_layout(fig, height=380)
     fig.update_layout(hovermode="x unified")
-    fig.update_yaxes(title_text="TSS / training load", title_font=dict(color=_MUTED), zeroline=True, zerolinecolor=_AXIS, zerolinewidth=1)
+    fig.update_yaxes(
+        title_text="TSS / training load",
+        title_font=dict(color=_MUTED),
+        zeroline=True,
+        zerolinecolor=_AXIS,
+        zerolinewidth=1,
+    )
     return fig
 
 
@@ -273,7 +290,9 @@ def _power_curve_figure(curve: dict[int, float]) -> go.Figure:
 def _zones_figure(dist: ZoneDistribution, ramp: tuple[str, ...]) -> go.Figure:
     """One horizontal stacked bar; segment = share of time in that zone."""
     fig = go.Figure()
-    for i, (label, seconds, pct) in enumerate(zip(dist.labels, dist.seconds, dist.percent)):
+    for i, (label, seconds, pct) in enumerate(
+        zip(dist.labels, dist.seconds, dist.percent, strict=True)
+    ):
         fig.add_bar(
             y=[""],
             x=[pct],

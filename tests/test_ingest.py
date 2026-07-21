@@ -1,8 +1,8 @@
 from datetime import datetime
 
 import pytest
-from conftest import SPORT_RUNNING
 
+from conftest import SPORT_RUNNING
 from ride_analytics.ingest import IngestError, load_fit, load_rides
 
 

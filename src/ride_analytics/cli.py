@@ -9,7 +9,13 @@ import click
 
 from ride_analytics.config import AthleteConfig, ConfigError, load_config
 from ride_analytics.ingest import IngestError, load_rides
-from ride_analytics.report.builder import ReportData, build_report_data, render_report, ride_rows, totals
+from ride_analytics.report.builder import (
+    ReportData,
+    build_report_data,
+    render_report,
+    ride_rows,
+    totals,
+)
 
 DEFAULT_CONFIGS = ("config.yaml", "config.example.yaml")
 

@@ -19,8 +19,22 @@ SPORT_CYCLING = 2
 SPORT_RUNNING = 1
 
 _CRC_TABLE = (
-    0x0000, 0xCC01, 0xD801, 0x1400, 0xF001, 0x3C00, 0x2800, 0xE401,
-    0xA001, 0x6C00, 0x7800, 0xB401, 0x5000, 0x9C01, 0x8801, 0x4400,
+    0x0000,
+    0xCC01,
+    0xD801,
+    0x1400,
+    0xF001,
+    0x3C00,
+    0x2800,
+    0xE401,
+    0xA001,
+    0x6C00,
+    0x7800,
+    0xB401,
+    0x5000,
+    0x9C01,
+    0x8801,
+    0x4400,
 )
 
 # name -> (field_def_num, byte size, base type)
@@ -60,7 +74,7 @@ def _definition(local_type: int, global_num: int, fields: list[tuple[int, int, i
 
 def _data(local_type: int, fields: list[tuple[int, int, int]], values: list[int | None]) -> bytes:
     out = bytes([local_type])
-    for (_, size, base), value in zip(fields, values):
+    for (_, size, base), value in zip(fields, values, strict=True):
         raw = _INVALID[base] if value is None else value
         out += struct.pack(_PACK_FMT[size], raw)
     return out
@@ -106,7 +120,7 @@ def build_fit(
     ]
     rec_fields = [_RECORD_FIELDS[name] for name in rec_names]
     body += _definition(1, 20, rec_fields)
-    for offset, rec in zip(offsets, records):
+    for offset, rec in zip(offsets, records, strict=True):
         values: list[int | None] = [start_ts + int(offset)]
         for name in rec_names[1:]:
             values.append(_raw_record_value(name, rec[name]) if name in rec else None)

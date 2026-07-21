@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta
 
+import pandas as pd
 import pytest
 
-import pandas as pd
 from ride_analytics.config import AthleteConfig
 from ride_analytics.metrics.zones import (
     aggregate_zone_distributions,
