@@ -8,6 +8,7 @@ const state = {
   dateRange: { min: null, max: null }, // available range from the upload
   activePick: null,                    // active quick-pick chip, if any
   tables: {},                          // per-table rows + sort, for re-sorting
+  selectedCluster: "",                 // "" = all climbs (flat list)
 };
 
 const el = (id) => document.getElementById(id);
@@ -222,6 +223,7 @@ async function refreshDashboard() {
     loadChart("/api/zones", params, "chart-hr-zones", (b) => b.hr),
     load("/api/rides", params, renderRides, "table-rides"),
     load("/api/climbs", params, renderClimbs, "table-climbs"),
+    load("/api/climbs/clusters", params, renderClusterOptions, "table-climbs"),
   ]);
 }
 
@@ -350,6 +352,44 @@ function renderRides(body) {
 function renderClimbs(body) {
   el("climbs-subtitle").textContent = `${body.n_climbs} Anstiege, neueste zuerst`;
   renderTable("table-climbs", CLIMB_COLUMNS, body.climbs, "Keine Anstiege im gewählten Zeitraum.");
+}
+
+// ---------- Climb cluster picker ----------
+
+function clusterLabel(cluster) {
+  const parts = [
+    cluster.name || cluster.location_label,
+    `${fmtNum(cluster.length_km, 1)} km`,
+    `${fmtNum(cluster.avg_gradient_pct, 1)} %`,
+    cluster.ascent_count === 1 ? "1 Befahrung" : `${cluster.ascent_count} Befahrungen`,
+  ];
+  return parts.join(" · ");
+}
+
+function renderClusterOptions(body) {
+  const select = el("climb-select");
+  const clusters = body.clusters || [];
+  // Repeatedly ridden climbs first; one-offs are grouped at the end.
+  const repeated = clusters.filter((c) => c.ascent_count > 1);
+  const singles = clusters.filter((c) => c.ascent_count === 1);
+
+  const option = (c) => `<option value="${c.cluster_id}">${escapeHtml(clusterLabel(c))}</option>`;
+  let html = '<option value="">Alle Anstiege</option>';
+  html += repeated.map(option).join("");
+  if (singles.length) {
+    html +=
+      '<optgroup label="Einmalig gefahren">' + singles.map(option).join("") + "</optgroup>";
+  }
+  select.innerHTML = html;
+
+  // Keep the current pick when the date filter reshuffles the cluster list.
+  const stillThere = clusters.some((c) => c.cluster_id === state.selectedCluster);
+  state.selectedCluster = stillThere ? state.selectedCluster : "";
+  select.value = state.selectedCluster;
+}
+
+function onClusterSelected() {
+  state.selectedCluster = el("climb-select").value;
 }
 
 function renderTable(containerId, columns, rows, emptyText) {
@@ -487,6 +527,7 @@ function escapeHtml(text) {
 function boot() {
   setupUpload();
   setupFilter();
+  el("climb-select").addEventListener("change", onClusterSelected);
   el("clear-data").addEventListener("click", clearData);
   restoreSession();
 }
