@@ -23,6 +23,9 @@ class Session:
     session_id: str
     analyzed: list[AnalyzedRide] = field(default_factory=list)
     climb_efforts: list[ClimbEffort] = field(default_factory=list)
+    # User-given climb names, keyed by cluster id. Session-scoped like everything
+    # else here — never written to disk.
+    cluster_names: dict[str, str] = field(default_factory=dict)
     last_access: datetime = field(default_factory=datetime.now)
 
     def ride_start_times(self) -> set[datetime]:

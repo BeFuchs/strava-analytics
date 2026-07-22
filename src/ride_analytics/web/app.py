@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import tempfile
 import zipfile
 from datetime import date, timedelta
@@ -51,6 +52,7 @@ from ride_analytics.metrics.zones import (
 from ride_analytics.report.builder import AnalyzedRide
 from ride_analytics.web import charts
 from ride_analytics.web.schemas import (
+    ClusterNameRequest,
     DateRange,
     HealthResponse,
     SkippedFile,
@@ -68,6 +70,8 @@ MAX_COMPRESSION_RATIO = 100
 
 FIT_MAGIC = b".FIT"
 FIT_MAGIC_OFFSET = 8
+
+MAX_CLUSTER_NAME_LENGTH = 60
 
 _COPY_CHUNK = 1024 * 1024
 
@@ -296,7 +300,7 @@ def create_app(config: AthleteConfig) -> FastAPI:
         clusters.sort(key=lambda c: (c.ascent_count, c.last_ridden_date), reverse=True)
         return {
             "n_clusters": len(clusters),
-            "clusters": [_cluster_summary(c) for c in clusters],
+            "clusters": [_cluster_summary(c, session.cluster_names) for c in clusters],
         }
 
     @app.get("/api/climbs/clusters/{cluster_id}")
@@ -305,15 +309,35 @@ def create_app(config: AthleteConfig) -> FastAPI:
         session: Session = Depends(get_session),
         dates: tuple[date | None, date | None] = Depends(date_filter),
     ) -> dict:
-        clusters = cluster_climbs(_filtered_efforts(session, *dates))
-        cluster = next((c for c in clusters if c.cluster_id == cluster_id), None)
+        efforts = _filtered_efforts(session, *dates)
+        cluster = next((c for c in cluster_climbs(efforts) if c.cluster_id == cluster_id), None)
         if cluster is None:
             raise api_error(
                 404,
                 "cluster not found",
                 "Kein Anstieg mit dieser ID im gewählten Zeitraum.",
             )
-        return _cluster_detail(cluster)
+        return _cluster_detail(cluster, session.cluster_names, efforts)
+
+    @app.put("/api/climbs/clusters/{cluster_id}/name")
+    def rename_cluster(
+        cluster_id: str,
+        payload: ClusterNameRequest,
+        session: Session = Depends(get_session),
+    ) -> dict:
+        name = payload.name.strip()
+        if len(name) > MAX_CLUSTER_NAME_LENGTH:
+            raise api_error(
+                400,
+                "name too long",
+                f"Name darf höchstens {MAX_CLUSTER_NAME_LENGTH} Zeichen haben.",
+            )
+        if name:
+            session.cluster_names[cluster_id] = name
+        else:
+            # Empty name clears the override; the coordinate label takes over again.
+            session.cluster_names.pop(cluster_id, None)
+        return {"cluster_id": cluster_id, "name": session.cluster_names.get(cluster_id)}
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -562,10 +586,11 @@ def _filtered_efforts(
     return [e for e in session.climb_efforts if in_range(e)]
 
 
-def _cluster_summary(cluster: ClimbCluster) -> dict:
+def _cluster_summary(cluster: ClimbCluster, names: dict[str, str]) -> dict:
     """Cluster metadata without the per-ascent list (list view)."""
     return {
         "cluster_id": cluster.cluster_id,
+        "name": names.get(cluster.cluster_id),
         "location_label": cluster.location_label,
         "length_km": cluster.length_km,
         "avg_gradient_pct": cluster.avg_gradient_pct,
@@ -576,10 +601,17 @@ def _cluster_summary(cluster: ClimbCluster) -> dict:
     }
 
 
-def _cluster_detail(cluster: ClimbCluster) -> dict:
-    """Full cluster incl. its ascents, newest first (detail view)."""
+def _cluster_detail(
+    cluster: ClimbCluster, names: dict[str, str], efforts: list[ClimbEffort]
+) -> dict:
+    """Full cluster incl. its ascents, newest first (detail view).
+
+    Pacing quarters live on the original ``Climb`` rather than on the cluster
+    ascent, so they are looked up by start time instead of re-clustering.
+    """
+    quarters_by_start = {e.climb.start_time: e.climb.quarter_avg_power_watts for e in efforts}
     return {
-        **_cluster_summary(cluster),
+        **_cluster_summary(cluster, names),
         "ascents": [
             {
                 "date": ascent.date.date().isoformat(),
@@ -588,7 +620,15 @@ def _cluster_detail(cluster: ClimbCluster) -> dict:
                 "avg_power_watts": ascent.avg_power_watts,
                 "watts_per_kg": ascent.watts_per_kg,
                 "avg_hr": ascent.avg_hr,
+                "pacing_quarters": _clean_quarters(quarters_by_start.get(ascent.date)),
             }
             for ascent in cluster.ascents
         ],
     }
+
+
+def _clean_quarters(quarters: tuple[float, ...] | None) -> list[float | None] | None:
+    """Pacing quarters as JSON-safe values — NaN would break strict JSON parsing."""
+    if quarters is None:
+        return None
+    return [None if q is None or math.isnan(q) else q for q in quarters]
