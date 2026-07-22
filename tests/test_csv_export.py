@@ -1,12 +1,13 @@
 import csv
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import pytest
 
 from ride_analytics.config import AthleteConfig
-from ride_analytics.export.csv_export import CLIMB_COLUMNS, export_csv
+from ride_analytics.export.csv_export import CLIMB_COLUMNS, export_comparison_csv, export_csv
 from ride_analytics.ingest import Ride, RideMeta
+from ride_analytics.metrics.comparison import compare_periods
 from ride_analytics.report.builder import build_report_data
 from test_climbs import track_df
 
@@ -169,6 +170,27 @@ def test_climbs_csv_lists_detected_climbs(tmp_path):
 
     rides = read_rows(tmp_path / "rides.csv")
     assert float(rides[0]["elevation_gain_m"]) == pytest.approx(180.0, abs=5.0)
+
+
+def test_comparison_csv_round_trip(tmp_path):
+    may = make_ride("a.fit", datetime(2025, 5, 2, 9, 0, 0), {"power": [200] * 3600})
+    june = make_ride("b.fit", datetime(2025, 6, 3, 9, 0, 0), {"power": [200] * 1800})
+    result = compare_periods(
+        [may, june],
+        CONFIG,
+        (date(2025, 5, 1), date(2025, 5, 31)),
+        (date(2025, 6, 1), date(2025, 6, 30)),
+    )
+
+    path = export_comparison_csv(result, tmp_path)
+
+    assert path.name == "comparison.csv"
+    rows = read_rows(path)
+    assert list(rows[0].keys()) == ["metric", "period_a", "period_b", "delta_abs", "delta_pct"]
+    by_metric = {row["metric"]: row for row in rows}
+    assert float(by_metric["n_rides"]["period_a"]) == 1
+    assert float(by_metric["total_tss"]["delta_pct"]) == pytest.approx(-50.0, abs=1.0)
+    assert "distance_per_week_km" in by_metric  # May vs June differ in length
 
 
 def test_durability_csv_columns(tmp_path, report_data):

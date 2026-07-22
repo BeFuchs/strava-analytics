@@ -14,7 +14,16 @@ from pathlib import Path
 
 import pandas as pd
 
+from ride_analytics.metrics.comparison import ComparisonResult
 from ride_analytics.report.builder import ReportData
+
+
+def export_comparison_csv(result: ComparisonResult, out_dir: str | Path) -> Path:
+    """Write the period-comparison table as ``comparison.csv`` into ``out_dir``."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    table = result.table.round({"period_a": 2, "period_b": 2, "delta_abs": 2, "delta_pct": 1})
+    return _write(table, out_dir / "comparison.csv")
 
 
 def export_csv(data: ReportData, weight_kg: float, out_dir: str | Path) -> list[Path]:
