@@ -1,17 +1,32 @@
 # Ride Analytics
 
-A Python CLI that turns a Strava/Garmin FIT export into one self-contained HTML training report: normalized power, training load (CTL/ATL/TSB), power curve, and time in zones, computed entirely on your machine.
+A local-first cycling analytics tool for Strava/Garmin FIT exports: a **browser dashboard** for interactive analysis and a **CLI** for one-shot HTML reports. Normalized power, training load (CTL/ATL/TSB), power curve, durability, climbs and time in zones — computed entirely on your machine, nothing uploaded.
 
-![Training report](docs/report-screenshot.png)
+![Web dashboard](docs/dashboard-screenshot.png)
 
-*Report rendered from synthetic demo data.*
+*The local web dashboard: drop in your FIT files, steer every panel with one global date filter. Rendered from real ride data.*
 
 ## Why local, why no API
 
-Strava tightened its API terms in 2026: API data may not be fed into AI models, and third-party apps may no longer display other users' data. Instead of building on an API that restricts what you can do with your own numbers, this tool reads the FIT files from a regular Strava bulk export. Everything runs offline. No OAuth, no tokens, no server, and your training data never leaves your disk.
+Strava tightened its API terms in 2026: API data may not be fed into AI models, and third-party apps may no longer display other users' data. Instead of building on an API that restricts what you can do with your own numbers, this tool reads the FIT files from a regular Strava bulk export. Everything runs offline. No OAuth, no tokens, no cloud, and your training data never leaves your disk.
+
+## Web dashboard
+
+The dashboard is the fastest way in — no command per analysis, just drop your files in the browser:
+
+```bash
+ride-analytics serve            # then open http://localhost:8000
+```
+
+On macOS you can skip the terminal entirely: double-click `run_dashboard.command` in Finder and it starts the server and opens the browser for you. Upload single `.fit` files or a whole Strava export `.zip` (drag-and-drop or file picker), then steer every panel — metric tiles, PMC, power curve, durability, zones, rides and climbs — with one global date filter.
+
+**Your data stays on your machine.** Uploaded files are parsed in a temporary directory and deleted immediately; only the computed metrics stay in memory, tied to your browser session. Nothing is written to disk, there is no database, and stopping the server discards everything. The server binds to `localhost` only.
+
+Why FastAPI with a plain HTML/CSS/JavaScript frontend and no framework: it keeps the repo small and buildless (no npm, no bundler, no build step), works fully offline (Plotly is served locally, never from a CDN), and the browser only ever talks to a small JSON API on your own machine. Charts are generated as Plotly JSON server-side and rendered client-side.
 
 ## Features
 
+- Local web dashboard (FastAPI): upload in the browser, one global date filter, live charts — or the CLI for a one-shot self-contained HTML report
 - Reads a single FIT file or a whole export folder; skips non-cycling activities with a log note
 - Tolerates missing sensors: rides without power still get distance, time, HR stats and an HR-based TSS estimate
 - Single-ride metrics: Normalized Power, Intensity Factor, TSS, Variability Index, work in kJ, moving vs. elapsed time
@@ -46,6 +61,10 @@ ride-analytics analyze path/to/activities --report report.html --summary --expor
 ```
 
 `analyze` accepts a single `.fit` file or a folder. `--summary` prints a per-ride table to the terminal, `--export-csv` writes all metrics as CSV files; the HTML report is written either way.
+
+![Training report](docs/report-screenshot.png)
+
+*The CLI's self-contained HTML report. Rendered from synthetic demo data.*
 
 To compare two seasons or arbitrary date ranges:
 
@@ -102,6 +121,8 @@ To avoid this permanently, keep the project outside any cloud-synced directory.
 
 Climbs are detected from the smoothed barometric altitude alone — no Strava segments needed. A stretch counts as a climb when it averages **at least 3 % gradient, gains at least 30 m and runs at least 500 m**. These thresholds are deliberate: 3 % is where climbing starts to dominate the power demand, 30 m filters out highway ramps and railway bridges, and 500 m keeps every short kicker from flooding the list. Short flat or downhill pieces inside a climb (under 200 m or 30 s) don't end it — a hairpin road with flat corners is one climb, not twenty. Repeated climbs are matched by start location (haversine) and similar length and gain, which yields personal bests and a time trend per climb.
 
+**The same hill, ridden many times, is grouped into one stable cluster.** Two ascents join the same cluster only when all three hold: start points within **200 m** (haversine), length within **±15 %**, and elevation gain within **±15 %** — each relative tolerance backed by an absolute floor (20 m of gain, 250 m of length) so that on a small climb, barometric noise or a shifted detection boundary doesn't split one hill into two. A cluster's representative length, gain and start coordinate is the **median** across its ascents, not the mean: a single GPS-drifted outlier then can't drag the cluster off the hill the way an average would. Cluster IDs are derived deterministically from the rounded coordinate and length, so re-uploading the same export reproduces the same clusters. (The dashboard currently shows the flat list of climbs; the per-climb comparison view that consumes these clusters is on the roadmap — the clustering and its API are already built.)
+
 ## Architecture
 
 ```
@@ -117,14 +138,21 @@ src/ride_analytics/
 │   ├── comparison.py   # two-period aggregation and deltas
 │   ├── pmc.py          # CTL / ATL / TSB time series
 │   └── zones.py        # power & HR zone distributions
+├── clustering/
+│   └── climb_clusters.py  # stable clusters for repeated climbs
 ├── export/
 │   └── csv_export.py   # all computed metrics as CSV files
-└── report/
-    ├── builder.py      # data model + Plotly figures + template rendering
-    └── templates/      # self-contained HTML report
+├── report/
+│   ├── builder.py      # data model + Plotly figures + template rendering
+│   └── templates/      # self-contained HTML report
+└── web/
+    ├── app.py          # FastAPI routes — serialization only, no math
+    ├── session.py      # in-memory session store (no persistence)
+    ├── charts.py       # Plotly figures as JSON for the frontend
+    └── static/         # index.html, CSS, app.js (vanilla, no build step)
 ```
 
-Each metric is a pure function `(DataFrame, AthleteConfig) -> result`: ingest knows nothing about metrics, metrics know nothing about HTML, the report layer does no math. The test suite verifies every formula against synthetic data with known results (constant 200 W for an hour at FTP 200 must yield IF 1.0 and TSS 100) and feeds the ingest layer with FIT files generated by a minimal binary encoder in `tests/conftest.py`.
+Each metric is a pure function `(DataFrame, AthleteConfig) -> result`: ingest knows nothing about metrics, metrics know nothing about HTTP or HTML, and both the report layer and the web layer only orchestrate and serialize — they do no math. The test suite verifies every formula against synthetic data with known results (constant 200 W for an hour at FTP 200 must yield IF 1.0 and TSS 100), drives the API through FastAPI's TestClient, and feeds the ingest layer with FIT files generated by a minimal binary encoder in `tests/conftest.py`.
 
 ```bash
 pip install -e ".[dev]"
@@ -133,10 +161,13 @@ pytest && ruff check
 
 ## Future work
 
+- Climb comparison view in the dashboard: pick a recurring climb, see every ascent and the time trend (the clustering and its API endpoints are already built)
+- CSV download in the dashboard (the CLI already exports CSV)
 - Training plan suggestions derived from the PMC
 - Multi-sport support beyond cycling
 - W' balance and other advanced power models
 - Route map rendering (would need external map tiles; the elevation profile stays the default)
+- Optional internet hosting — deliberately out of scope: GPS and heart-rate data are health data under Art. 9 GDPR, so a public deployment brings obligations (privacy policy, data-processing agreement, deletion concept) that a local-first tool avoids by never leaving your machine
 
 ## About
 
