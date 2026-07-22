@@ -16,7 +16,21 @@ from fitparse.utils import FitParseError
 
 logger = logging.getLogger(__name__)
 
-RECORD_FIELDS = ("timestamp", "power", "heart_rate", "cadence", "speed", "altitude", "distance")
+RECORD_FIELDS = (
+    "timestamp",
+    "power",
+    "heart_rate",
+    "cadence",
+    "speed",
+    "altitude",
+    "enhanced_altitude",
+    "distance",
+    "position_lat",
+    "position_long",
+)
+
+# FIT stores positions as signed 32-bit "semicircles".
+SEMICIRCLE_TO_DEGREES = 180 / 2**31
 
 
 class IngestError(Exception):
@@ -146,6 +160,19 @@ def _normalize_records(records: list[dict]) -> pd.DataFrame:
     df = df.dropna(subset=["timestamp"])
     for col in df.columns.drop("timestamp"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # enhanced_altitude is the 32-bit variant of the same barometric altitude;
+    # prefer it where present so the output carries a single altitude column.
+    if "enhanced_altitude" in df.columns:
+        if "altitude" in df.columns:
+            df["altitude"] = df["enhanced_altitude"].fillna(df["altitude"])
+        else:
+            df["altitude"] = df["enhanced_altitude"]
+        df = df.drop(columns="enhanced_altitude")
+
+    for col in ("position_lat", "position_long"):
+        if col in df.columns:
+            df[col] = df[col] * SEMICIRCLE_TO_DEGREES
 
     df = df.sort_values("timestamp")
     df = df.drop_duplicates(subset="timestamp", keep="first")

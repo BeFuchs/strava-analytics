@@ -14,10 +14,12 @@ data/*
 !data/.gitkeep
 config.yaml
 *.html
+*.csv
 
 # Tooling / prompts (not part of the project)
 CLAUDE.md
-CLAUDE_CODE_BRIEFING.md
+CLAUDE_CODE_BRIEFING*.md
+PR_CHECK_UND_PR.md
 .claude/
 
 # macOS

@@ -49,6 +49,22 @@ def test_units_are_decoded(make_fit):
     assert ride.df["power"].max() == 200
 
 
+def test_positions_converted_to_degrees(make_fit):
+    records = [{"position_lat": 49.41, "position_long": 8.69, "altitude": 120.0} for _ in range(30)]
+    ride = load_fit(make_fit(records=records))
+
+    assert ride.df["position_lat"].iloc[0] == pytest.approx(49.41, abs=1e-6)
+    assert ride.df["position_long"].iloc[0] == pytest.approx(8.69, abs=1e-6)
+
+
+def test_enhanced_altitude_fills_altitude_column(make_fit):
+    records = [{"enhanced_altitude": 250.0} for _ in range(30)]
+    ride = load_fit(make_fit(records=records))
+
+    assert "enhanced_altitude" not in ride.df.columns
+    assert ride.df["altitude"].iloc[0] == pytest.approx(250.0)
+
+
 def test_non_cycling_is_skipped(make_fit, caplog):
     path = make_fit(name="run.fit", sport=SPORT_RUNNING)
 
