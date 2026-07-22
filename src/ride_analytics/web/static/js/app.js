@@ -281,7 +281,9 @@ async function loadChart(path, params, containerId, pick) {
 
 // ---------- Renderers ----------
 
-const EMPTY = '<div class="card-empty">Keine Fahrten im gewählten Zeitraum.</div>';
+const EMPTY =
+  '<div class="card-empty">Keine Fahrten im gewählten Zeitraum. ' +
+  "Erweitere den Zeitraum oder wähle „Alles“.</div>";
 
 function renderChart(containerId, figure) {
   const node = el(containerId);

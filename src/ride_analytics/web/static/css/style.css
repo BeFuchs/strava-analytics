@@ -36,7 +36,9 @@ button {
   cursor: pointer;
   border: none;
   border-radius: 8px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
+select, input, .chip { transition: background-color 0.15s ease, border-color 0.15s ease; }
 
 :focus-visible {
   outline: 3px solid var(--emerald-light);
@@ -219,9 +221,10 @@ main {
 .range-caption strong { color: var(--emerald-ink); }
 
 /* ---------- Metric tiles ---------- */
+/* Fixed four columns: the seven tiles read as 4 on top, 3 below. */
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(4, 1fr);
   gap: var(--gap);
   margin-bottom: var(--gap);
 }
@@ -230,7 +233,9 @@ main {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 16px 18px;
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
 }
+.tile:hover { box-shadow: 0 2px 6px rgba(6, 78, 59, 0.1), 0 8px 24px rgba(6, 78, 59, 0.08); }
 .tile .label {
   font-size: 0.75rem;
   color: var(--text-secondary);
@@ -378,7 +383,9 @@ tbody td {
   white-space: nowrap;
 }
 tbody td:first-child { text-align: left; }
-tbody tr:hover { background: var(--champagne-light); }
+tbody tr { transition: background-color 0.15s ease; }
+tbody tr:nth-child(even) { background: var(--champagne-light); }
+tbody tr:hover { background: var(--champagne); }
 
 /* ---------- Card states ---------- */
 .card-empty, .card-error {
@@ -409,6 +416,10 @@ tbody tr:hover { background: var(--champagne-light); }
 }
 
 /* ---------- Responsive ---------- */
+/* Desktop is the target; these keep narrower windows usable, not pixel-perfect. */
+@media (max-width: 1080px) {
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+}
 @media (max-width: 768px) {
   main { padding: 16px; }
   .cards { grid-template-columns: 1fr; }
