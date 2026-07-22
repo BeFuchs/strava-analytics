@@ -26,7 +26,12 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from plotly.offline import get_plotlyjs
 
-from ride_analytics.clustering.climb_clusters import ClimbEffort, climb_avg_hr
+from ride_analytics.clustering.climb_clusters import (
+    ClimbCluster,
+    ClimbEffort,
+    climb_avg_hr,
+    cluster_climbs,
+)
 from ride_analytics.config import AthleteConfig
 from ride_analytics.ingest import IngestError, Ride, load_fit
 from ride_analytics.metrics.climbs import Climb, detect_climbs, ride_elevation_gain_m
@@ -276,6 +281,34 @@ def create_app(config: AthleteConfig) -> FastAPI:
         climbs.sort(key=lambda c: c.start_time, reverse=True)
         return {"n_climbs": len(climbs), "climbs": [_climb_row(c) for c in climbs]}
 
+    @app.get("/api/climbs/clusters")
+    def climb_clusters(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> dict:
+        clusters = cluster_climbs(_filtered_efforts(session, *dates))
+        clusters.sort(key=lambda c: (c.ascent_count, c.last_ridden_date), reverse=True)
+        return {
+            "n_clusters": len(clusters),
+            "clusters": [_cluster_summary(c) for c in clusters],
+        }
+
+    @app.get("/api/climbs/clusters/{cluster_id}")
+    def climb_cluster_detail(
+        cluster_id: str,
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> dict:
+        clusters = cluster_climbs(_filtered_efforts(session, *dates))
+        cluster = next((c for c in clusters if c.cluster_id == cluster_id), None)
+        if cluster is None:
+            raise api_error(
+                404,
+                "cluster not found",
+                "Kein Anstieg mit dieser ID im gewählten Zeitraum.",
+            )
+        return _cluster_detail(cluster)
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     return app
@@ -508,4 +541,48 @@ def _climb_row(climb: Climb) -> dict:
         "avg_power_watts": climb.avg_power_watts,
         "watts_per_kg": climb.watts_per_kg,
         "kj_before_climb": climb.kj_before_climb,
+    }
+
+
+def _filtered_efforts(
+    session: Session, date_from: date | None, date_to: date | None
+) -> list[ClimbEffort]:
+    """Climb efforts whose start date falls inside the inclusive range."""
+
+    def in_range(effort: ClimbEffort) -> bool:
+        day = effort.climb.start_time.date()
+        return (date_from is None or day >= date_from) and (date_to is None or day <= date_to)
+
+    return [e for e in session.climb_efforts if in_range(e)]
+
+
+def _cluster_summary(cluster: ClimbCluster) -> dict:
+    """Cluster metadata without the per-ascent list (list view)."""
+    return {
+        "cluster_id": cluster.cluster_id,
+        "location_label": cluster.location_label,
+        "length_km": cluster.length_km,
+        "avg_gradient_pct": cluster.avg_gradient_pct,
+        "elevation_gain_m": cluster.elevation_gain_m,
+        "ascent_count": cluster.ascent_count,
+        "best_time_s": cluster.best_time_s,
+        "last_ridden_date": cluster.last_ridden_date.isoformat(),
+    }
+
+
+def _cluster_detail(cluster: ClimbCluster) -> dict:
+    """Full cluster incl. its ascents, newest first (detail view)."""
+    return {
+        **_cluster_summary(cluster),
+        "ascents": [
+            {
+                "date": ascent.date.date().isoformat(),
+                "duration_s": ascent.duration_s,
+                "vam_m_per_h": ascent.vam_m_per_h,
+                "avg_power_watts": ascent.avg_power_watts,
+                "watts_per_kg": ascent.watts_per_kg,
+                "avg_hr": ascent.avg_hr,
+            }
+            for ascent in cluster.ascents
+        ],
     }

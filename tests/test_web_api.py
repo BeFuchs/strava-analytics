@@ -28,6 +28,39 @@ def fit_bytes(tmp_path, name="ride.fit", start=datetime(2024, 5, 1, 8, 0), **kwa
     return data
 
 
+SPEED_MS = 5.0
+LAT_DEG_PER_M = 1 / 111_195.0
+
+
+def climb_records(lat0: float, lon0: float = 8.5, length_m=1000.0, gain_frac=0.06) -> list[dict]:
+    """A ride that climbs once: 600 m flat, then length_m at gain_frac, then 300 m flat."""
+    records: list[dict] = []
+    dist, alt = 0.0, 100.0
+    plan = [(600.0, 0.0), (length_m, gain_frac), (300.0, 0.0)]
+    for seg_len, gradient in plan:
+        for _ in range(round(seg_len / SPEED_MS)):
+            dist += SPEED_MS
+            alt += SPEED_MS * gradient
+            records.append(
+                {
+                    "distance": dist,
+                    "altitude": alt,
+                    "position_lat": lat0 + dist * LAT_DEG_PER_M,
+                    "position_long": lon0,
+                    "power": 260,
+                    "heart_rate": 150,
+                }
+            )
+    return records
+
+
+def climb_bytes(tmp_path, name, start, lat0, **kwargs) -> bytes:
+    path = build_fit(tmp_path / name, climb_records(lat0, **kwargs), start=start)
+    data = path.read_bytes()
+    path.unlink()
+    return data
+
+
 def upload(client, files, session_id=None):
     headers = {"X-Session-Id": session_id} if session_id else {}
     return client.post(
@@ -208,6 +241,64 @@ def test_empty_range_returns_empty_state(client, seeded):
     summary = client.get("/api/summary", params=params, headers=seeded).json()
     assert summary["n_rides"] == 0
     assert summary["avg_ctl"] is None
+
+
+@pytest.fixture
+def climb_session(client, tmp_path):
+    """Session with three efforts up one hill plus one distant hill; returns headers."""
+    lat0 = 49.40
+    files = [
+        ("c1.fit", climb_bytes(tmp_path, "c1.fit", datetime(2026, 3, 1, 8, 0), lat0)),
+        ("c2.fit", climb_bytes(tmp_path, "c2.fit", datetime(2026, 3, 8, 8, 0), lat0)),
+        ("c3.fit", climb_bytes(tmp_path, "c3.fit", datetime(2026, 3, 15, 8, 0), lat0)),
+        ("far.fit", climb_bytes(tmp_path, "far.fit", datetime(2026, 3, 20, 8, 0), lat0 + 0.05)),
+    ]
+    body = upload(client, files).json()
+    assert body["rides_processed"] == 4
+    return {"X-Session-Id": body["session_id"]}
+
+
+def test_clusters_group_repeated_climbs(client, climb_session):
+    body = client.get("/api/climbs/clusters", headers=climb_session).json()
+    assert body["n_clusters"] == 2
+    counts = sorted(c["ascent_count"] for c in body["clusters"])
+    assert counts == [1, 3]
+    # Sorted by ascent_count descending -> the 3-effort cluster is first.
+    top = body["clusters"][0]
+    assert top["ascent_count"] == 3
+    assert top["last_ridden_date"] == "2026-03-15"
+    assert "N" in top["location_label"]
+
+
+def test_cluster_detail_lists_ascents_newest_first(client, climb_session):
+    clusters = client.get("/api/climbs/clusters", headers=climb_session).json()["clusters"]
+    top_id = clusters[0]["cluster_id"]
+    detail = client.get(f"/api/climbs/clusters/{top_id}", headers=climb_session).json()
+    dates = [a["date"] for a in detail["ascents"]]
+    assert dates == ["2026-03-15", "2026-03-08", "2026-03-01"]
+    assert detail["ascents"][0]["avg_power_watts"] is not None
+
+
+def test_cluster_date_filter(client, climb_session):
+    body = client.get(
+        "/api/climbs/clusters",
+        params={"date_from": "2026-03-01", "date_to": "2026-03-10"},
+        headers=climb_session,
+    ).json()
+    # Only two of the three home efforts fall in range; distant hill is excluded.
+    top = max(body["clusters"], key=lambda c: c["ascent_count"])
+    assert top["ascent_count"] == 2
+
+
+def test_unknown_cluster_id_returns_404(client, climb_session):
+    response = client.get("/api/climbs/clusters/deadbeef", headers=climb_session)
+    assert response.status_code == 404
+    assert response.json()["error"] == "cluster not found"
+
+
+def test_cluster_endpoints_require_session(client):
+    assert client.get("/api/climbs/clusters").status_code == 404
+    assert client.get("/api/climbs/clusters/abc123").status_code == 404
 
 
 def test_delete_session(client, tmp_path):
