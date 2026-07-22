@@ -127,14 +127,20 @@ def create_app(config: AthleteConfig) -> FastAPI:
     async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    # Sync (threadpool) on purpose: building the ~5 MB bundle is blocking work
+    # and would stall the event loop for every other request in an async route.
     @app.get("/static/js/plotly.min.js", include_in_schema=False)
-    async def plotly_js() -> Response:
+    def plotly_js() -> Response:
         # Served from the installed plotly package instead of a vendored copy:
         # keeps the repo small, works offline, and needs no CDN.
         global _plotly_js_cache
         if _plotly_js_cache is None:
             _plotly_js_cache = get_plotlyjs().encode()
-        return Response(content=_plotly_js_cache, media_type="text/javascript")
+        return Response(
+            content=_plotly_js_cache,
+            media_type="text/javascript",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @app.get("/api/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

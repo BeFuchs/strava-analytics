@@ -285,6 +285,13 @@ function renderChart(containerId, figure) {
     node.innerHTML = EMPTY;
     return;
   }
+  if (typeof Plotly === "undefined") {
+    // The chart library did not load — say so instead of blaming the data.
+    node.innerHTML =
+      '<div class="card-error">Diagramm-Bibliothek nicht geladen. ' +
+      "Seite neu laden (Cmd+Shift+R).</div>";
+    return;
+  }
   node.innerHTML = "";
   Plotly.react(node, figure.data, figure.layout, { displayModeBar: false, responsive: true });
 }
