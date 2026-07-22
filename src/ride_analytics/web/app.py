@@ -34,8 +34,14 @@ from ride_analytics.clustering.climb_clusters import (
     cluster_climbs,
 )
 from ride_analytics.config import AthleteConfig
+from ride_analytics.export.csv_export import export_csv
 from ride_analytics.ingest import IngestError, Ride, load_fit
-from ride_analytics.metrics.climbs import Climb, detect_climbs, ride_elevation_gain_m
+from ride_analytics.metrics.climbs import (
+    Climb,
+    detect_climbs,
+    match_climbs,
+    ride_elevation_gain_m,
+)
 from ride_analytics.metrics.durability import compute_durability
 from ride_analytics.metrics.pmc import CTL_DAYS, compute_pmc
 from ride_analytics.metrics.power_curve import (
@@ -49,7 +55,7 @@ from ride_analytics.metrics.zones import (
     hr_zone_distribution,
     power_zone_distribution,
 )
-from ride_analytics.report.builder import AnalyzedRide
+from ride_analytics.report.builder import AnalyzedRide, ReportData
 from ride_analytics.web import charts
 from ride_analytics.web.schemas import (
     ClusterNameRequest,
@@ -318,6 +324,39 @@ def create_app(config: AthleteConfig) -> FastAPI:
                 "Kein Anstieg mit dieser ID im gewählten Zeitraum.",
             )
         return _cluster_detail(cluster, session.cluster_names, efforts)
+
+    @app.get("/api/export/csv")
+    def export_csv_zip(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> Response:
+        rides = _filtered(session, *dates)
+        if not rides:
+            raise api_error(
+                404,
+                "no rides",
+                "Keine Fahrten im gewählten Zeitraum — nichts zu exportieren.",
+            )
+        data = _report_data_for(session, *dates)
+        clusters = cluster_climbs(_filtered_efforts(session, *dates))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            written = export_csv(data, app.state.config.weight_kg, tmp_path)
+            written.append(_write_clusters_csv(clusters, session.cluster_names, tmp_path))
+
+            zip_path = tmp_path / "export.zip"
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for csv_path in written:
+                    archive.write(csv_path, csv_path.name)
+            payload = zip_path.read_bytes()
+
+        filename = _export_filename(session, *dates)
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @app.put("/api/climbs/clusters/{cluster_id}/name")
     def rename_cluster(
@@ -642,3 +681,65 @@ def _clean_quarters(quarters: tuple[float, ...] | None) -> list[float | None] | 
     if quarters is None:
         return None
     return [None if q is None or math.isnan(q) else q for q in quarters]
+
+
+def _report_data_for(session: Session, date_from: date | None, date_to: date | None) -> ReportData:
+    """Assemble a ReportData from the filtered session rides for CSV export.
+
+    Built from the already-computed per-ride metrics so the export matches what
+    the dashboard shows, including the 42-day PMC lead-in.
+    """
+    rides = _filtered(session, date_from, date_to)
+    return ReportData(
+        rides=rides,
+        pmc=_pmc_frame(session, date_from, date_to),
+        power_curve=aggregate_power_curve([a.power_curve for a in rides]),
+        ftp_estimate=estimate_ftp(aggregate_power_curve([a.power_curve for a in rides])),
+        power_zones=aggregate_zone_distributions([a.power_zones for a in rides]),
+        hr_zones=aggregate_zone_distributions([a.hr_zones for a in rides]),
+        durability=compute_durability([a.ride.df for a in rides]),
+        climb_groups=match_climbs([climb for a in rides for climb in a.climbs]),
+    )
+
+
+CLUSTER_CSV_COLUMNS = [
+    "cluster_id",
+    "name",
+    "location_label",
+    "length_km",
+    "avg_gradient_pct",
+    "elevation_gain_m",
+    "ascent_count",
+    "best_time_s",
+    "last_ridden_date",
+]
+
+
+def _write_clusters_csv(clusters: list[ClimbCluster], names: dict[str, str], out_dir: Path) -> Path:
+    """Write ``climb_clusters.csv``: one row per cluster, same conventions as export."""
+    rows = [
+        {
+            "cluster_id": c.cluster_id,
+            "name": names.get(c.cluster_id, ""),
+            "location_label": c.location_label,
+            "length_km": round(c.length_km, 2),
+            "avg_gradient_pct": round(c.avg_gradient_pct, 1),
+            "elevation_gain_m": round(c.elevation_gain_m),
+            "ascent_count": c.ascent_count,
+            "best_time_s": round(c.best_time_s),
+            "last_ridden_date": c.last_ridden_date.isoformat(),
+        }
+        for c in clusters
+    ]
+    frame = pd.DataFrame(rows, columns=CLUSTER_CSV_COLUMNS)
+    path = out_dir / "climb_clusters.csv"
+    frame.to_csv(path, index=False, encoding="utf-8", na_rep="")
+    return path
+
+
+def _export_filename(session: Session, date_from: date | None, date_to: date | None) -> str:
+    """Download name spanning the active range, falling back to the session range."""
+    available = _session_date_range(session)
+    start = date_from.isoformat() if date_from else available.min
+    end = date_to.isoformat() if date_to else available.max
+    return f"ride-analytics_{start}_{end}.zip"

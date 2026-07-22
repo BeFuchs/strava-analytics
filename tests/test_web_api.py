@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import zipfile
 from datetime import datetime
 
@@ -358,6 +360,81 @@ def test_cluster_detail_includes_pacing_quarters(client, climb_session):
     quarters = detail["ascents"][0]["pacing_quarters"]
     assert quarters is not None
     assert len(quarters) == 4
+
+
+EXPECTED_CSV_FILES = {
+    "rides.csv",
+    "pmc.csv",
+    "power_curve.csv",
+    "zones.csv",
+    "durability.csv",
+    "climbs.csv",
+    "climb_clusters.csv",
+}
+
+
+def test_csv_export_returns_valid_zip_with_all_files(client, seeded):
+    response = client.get("/api/export/csv", headers=seeded)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert "attachment" in response.headers["content-disposition"]
+    assert ".zip" in response.headers["content-disposition"]
+
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    assert set(archive.namelist()) == EXPECTED_CSV_FILES
+
+
+def test_csv_export_respects_date_filter(client, seeded):
+    params = {"date_from": "2024-05-15", "date_to": "2024-06-15"}
+    api_rides = client.get("/api/rides", params=params, headers=seeded).json()["n_rides"]
+
+    response = client.get("/api/export/csv", params=params, headers=seeded)
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    rows = list(csv.DictReader(io.StringIO(archive.read("rides.csv").decode("utf-8"))))
+    assert len(rows) == api_rides == 1
+    assert rows[0]["date"] == "2024-06-01"
+
+
+def test_csv_export_filename_spans_range(client, seeded):
+    response = client.get(
+        "/api/export/csv",
+        params={"date_from": "2024-05-01", "date_to": "2024-07-01"},
+        headers=seeded,
+    )
+    disposition = response.headers["content-disposition"]
+    assert "ride-analytics_2024-05-01_2024-07-01.zip" in disposition
+
+
+def test_csv_export_empty_range_returns_404(client, seeded):
+    response = client.get(
+        "/api/export/csv",
+        params={"date_from": "2023-01-01", "date_to": "2023-12-31"},
+        headers=seeded,
+    )
+    assert response.status_code == 404
+
+
+def test_csv_export_requires_session(client):
+    assert client.get("/api/export/csv").status_code == 404
+
+
+def test_climb_clusters_csv_has_expected_columns(client, climb_session):
+    response = client.get("/api/export/csv", headers=climb_session)
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    reader = csv.DictReader(io.StringIO(archive.read("climb_clusters.csv").decode("utf-8")))
+    assert reader.fieldnames == [
+        "cluster_id",
+        "name",
+        "location_label",
+        "length_km",
+        "avg_gradient_pct",
+        "elevation_gain_m",
+        "ascent_count",
+        "best_time_s",
+        "last_ridden_date",
+    ]
+    rows = list(reader)
+    assert rows  # at least one cluster from the climb session
 
 
 def test_delete_session(client, tmp_path):
