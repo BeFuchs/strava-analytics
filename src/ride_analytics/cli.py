@@ -157,6 +157,32 @@ def compare(
         click.echo(f"comparison table → {written}")
 
 
+@main.command()
+@click.option("--port", default=8000, show_default=True, help="Port to listen on.")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Bind address.")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Athlete config YAML (default: config.yaml, else config.example.yaml).",
+)
+def serve(port: int, host: str, config_path: Path | None) -> None:
+    """Start the local web dashboard at http://localhost:8000."""
+    import uvicorn
+
+    from ride_analytics.web.app import create_app
+
+    config = _resolve_config(config_path)
+    if host not in ("127.0.0.1", "localhost"):
+        click.echo(
+            "WARNING: binding to a non-local address — the dashboard and any "
+            "uploaded ride data become reachable from your local network."
+        )
+    click.echo(f"Ride Analytics dashboard → http://localhost:{port}")
+    uvicorn.run(create_app(config), host=host, port=port)
+
+
 def _parse_period(value: str) -> tuple[date, date]:
     try:
         start_raw, end_raw = value.split(":")
