@@ -74,7 +74,7 @@ ride-analytics compare path/to/activities --period-a 2025-01-01:2025-06-30 --per
 
 ![Durability section](docs/durability-screenshot.png)
 
-*Durability section of the report: one power curve per kJ bucket; the gap between the curves is fatigue resistance.*
+*Durability section of the report: one power curve per kJ bucket; the gap between the curves is fatigue resistance. Rendered from synthetic demo data.*
 
 **VAM (Vertical Ascent Metres per hour)** is climbing speed measured vertically: elevation gain divided by climbing time. It makes climbs of different length and gradient directly comparable — a steady club rider climbs at 700–900 m/h, pro race pace on a mountain pass is 1,500+.
 
