@@ -280,6 +280,45 @@ main {
   flex: 1 1 320px;
 }
 
+/* ---------- Climb detail ---------- */
+.climb-detail-head {
+  background: var(--champagne-light);
+  border: 1px solid var(--champagne-dark);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.climb-detail-head .title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 1.05rem;
+  font-weight: 650;
+  color: var(--emerald-ink);
+}
+.climb-detail-head .facts {
+  margin-top: 6px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Personal best: tinted row plus a text badge — never colour alone. */
+tbody tr.is-best { background: rgba(6, 78, 59, 0.07); }
+tbody tr.is-best:hover { background: rgba(6, 78, 59, 0.11); }
+.badge-best {
+  display: inline-block;
+  background: var(--emerald-ink);
+  color: var(--champagne);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  margin-left: 6px;
+}
+
 /* ---------- Tables ---------- */
 .table-scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }

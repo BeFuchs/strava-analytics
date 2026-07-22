@@ -225,6 +225,8 @@ async function refreshDashboard() {
     load("/api/climbs", params, renderClimbs, "table-climbs"),
     load("/api/climbs/clusters", params, renderClusterOptions, "table-climbs"),
   ]);
+  // Runs last: the cluster list decides whether the current pick still exists.
+  applyClimbSelection();
 }
 
 function updateRangeCaptions() {
@@ -390,6 +392,58 @@ function renderClusterOptions(body) {
 
 function onClusterSelected() {
   state.selectedCluster = el("climb-select").value;
+  applyClimbSelection();
+}
+
+/** Show either the flat climbs table or the detail view for one cluster. */
+function applyClimbSelection() {
+  const detail = el("climb-detail");
+  const flat = el("table-climbs");
+  if (!state.selectedCluster) {
+    hide(detail);
+    show(flat);
+    return;
+  }
+  hide(flat);
+  show(detail);
+  el("climb-detail-head").innerHTML = "";
+  el("chart-climb-trend").innerHTML = "";
+  el("table-ascents").innerHTML = skeleton(200);
+  load(
+    `/api/climbs/clusters/${encodeURIComponent(state.selectedCluster)}`,
+    activeParams(),
+    renderClimbDetail,
+    "table-ascents"
+  );
+}
+
+const ASCENT_COLUMNS = [
+  { key: "date", label: "Datum", type: "date" },
+  { key: "duration_s", label: "Zeit", type: "duration" },
+  { key: "vam_m_per_h", label: "VAM", type: "num", digits: 0 },
+  { key: "avg_power_watts", label: "Ø W", type: "num", digits: 0 },
+  { key: "watts_per_kg", label: "W/kg", type: "num", digits: 1 },
+  { key: "avg_hr", label: "Ø HF", type: "num", digits: 0 },
+  { key: "pacing_quarters", label: "Pacing (Viertel)", type: "pacing" },
+];
+
+function renderClimbDetail(cluster) {
+  const title = cluster.name || cluster.location_label;
+  el("climb-detail-head").innerHTML =
+    `<div class="title"><span id="climb-title">${escapeHtml(title)}</span></div>` +
+    `<div class="facts">${fmtNum(cluster.length_km, 1)} km · ` +
+    `${fmtNum(cluster.avg_gradient_pct, 1)} % · ` +
+    `${fmtNum(cluster.elevation_gain_m, 0)} Hm · ` +
+    `${cluster.ascent_count} Befahrungen · Bestzeit ${fmtHMS(cluster.best_time_s)}</div>`;
+
+  renderChart("chart-climb-trend", cluster.trend_figure);
+  if (!cluster.trend_figure) hide(el("chart-climb-trend"));
+  else show(el("chart-climb-trend"));
+
+  // Mark the fastest ascent so the personal best is readable, not just tinted.
+  const best = Math.min(...cluster.ascents.map((a) => a.duration_s));
+  const rows = cluster.ascents.map((a) => ({ ...a, _best: a.duration_s === best }));
+  renderTable("table-ascents", ASCENT_COLUMNS, rows, "Keine Befahrungen im Zeitraum.");
 }
 
 function renderTable(containerId, columns, rows, emptyText) {
@@ -414,10 +468,14 @@ function drawTable(containerId) {
     })
     .join("");
   const body = sorted
-    .map(
-      (row) =>
-        "<tr>" + columns.map((col) => `<td>${fmtCell(row[col.key], col)}</td>`).join("") + "</tr>"
-    )
+    .map((row) => {
+      const cells = columns.map((col, i) => {
+        let content = fmtCell(row[col.key], col);
+        if (i === 0 && row._best) content += '<span class="badge-best">Bestzeit</span>';
+        return `<td>${content}</td>`;
+      });
+      return `<tr${row._best ? ' class="is-best"' : ""}>${cells.join("")}</tr>`;
+    })
     .join("");
 
   el(containerId).innerHTML =
@@ -469,6 +527,10 @@ function fmtCell(value, col) {
   if (col.type === "date") return fmtDate(value);
   if (col.type === "text") return escapeHtml(value ?? "");
   if (col.type === "duration") return fmtHMS(value);
+  if (col.type === "pacing") {
+    if (!value) return "–";
+    return value.map((q) => (q === null ? "–" : fmtNum(q, 0))).join(" / ");
+  }
   if (col.type === "tss") {
     return value === null || value === undefined ? "–" : fmtNum(value, 0);
   }

@@ -184,6 +184,25 @@ def durability_figure(durability: pd.DataFrame) -> dict:
     return _fig_dict(fig)
 
 
+def climb_trend_figure(dates: list, durations_s: list[float]) -> dict:
+    """Time per ascent over date — form development on the same climb."""
+    minutes = [d / 60 for d in durations_s]
+    fig = go.Figure(
+        go.Scatter(
+            x=dates,
+            y=minutes,
+            mode="lines+markers",
+            line=dict(color=EMERALD, width=2),
+            marker=dict(size=8, color=EMERALD, line=dict(color="#FFFFFF", width=2)),
+            hovertemplate="%{x|%d.%m.%Y}: %{y:.1f} min<extra></extra>",
+        )
+    )
+    _base_layout(fig, height=260)
+    fig.update_layout(showlegend=False, margin=dict(l=56, r=24, t=8, b=40))
+    fig.update_yaxes(title_text="Zeit (min)")
+    return _fig_dict(fig)
+
+
 def _fmt_duration(seconds: float) -> str:
     total = int(round(seconds))
     hours, rest = divmod(total, 3600)

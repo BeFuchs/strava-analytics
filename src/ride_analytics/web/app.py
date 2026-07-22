@@ -610,8 +610,18 @@ def _cluster_detail(
     ascent, so they are looked up by start time instead of re-clustering.
     """
     quarters_by_start = {e.climb.start_time: e.climb.quarter_avg_power_watts for e in efforts}
+    # Chart runs oldest -> newest; a single ascent has no trend to show.
+    chronological = sorted(cluster.ascents, key=lambda a: a.date)
+    trend = (
+        charts.climb_trend_figure(
+            [a.date for a in chronological], [a.duration_s for a in chronological]
+        )
+        if len(chronological) > 1
+        else None
+    )
     return {
         **_cluster_summary(cluster, names),
+        "trend_figure": trend,
         "ascents": [
             {
                 "date": ascent.date.date().isoformat(),
