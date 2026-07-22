@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ride Analytics</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="/static/js/plotly.min.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="bar">
+      <h1>Ride Analytics</h1>
+      <div class="header-right">
+        <span class="active-range" id="header-range"></span>
+        <button class="btn-ghost hidden" id="clear-data">Daten löschen</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="privacy-note">
+      <strong>Lokal &amp; privat:</strong> Alle Auswertung läuft auf diesem Rechner.
+      Keine Daten verlassen den Computer, nichts wird dauerhaft gespeichert —
+      die Daten bleiben nur in dieser Sitzung erhalten und sind nach dem
+      Serverstopp weg.
+    </div>
+
+    <div class="error-banner hidden" id="global-error"></div>
+
+    <!-- Empty state: upload -->
+    <section id="view-upload">
+      <div class="dropzone" id="dropzone">
+        <div class="icon" aria-hidden="true">📂</div>
+        <h2>FIT-Dateien hierher ziehen</h2>
+        <p>Einzelne <code>.fit</code>-Dateien oder ein Strava-Bulk-Export als <code>.zip</code>.</p>
+        <p>Mehrfachauswahl möglich.</p>
+        <button class="btn-primary" id="pick-files">Dateien auswählen</button>
+        <input type="file" id="file-input" multiple accept=".fit,.FIT,.zip" class="hidden">
+        <p class="hint">Radfahrten werden analysiert, andere Aktivitäten übersprungen.</p>
+      </div>
+
+      <div class="upload-status hidden" id="upload-status">
+        <div><span class="spinner"></span> <span id="upload-message">Verarbeite Dateien …</span></div>
+        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+        <div id="upload-summary"></div>
+      </div>
+    </section>
+
+    <!-- Dashboard -->
+    <section id="view-dashboard" class="hidden">
+      <div class="filter-bar">
+        <div class="field">
+          <label for="date-from">Von</label>
+          <input type="date" id="date-from">
+        </div>
+        <div class="field">
+          <label for="date-to">Bis</label>
+          <input type="date" id="date-to">
+          <span class="error-text hidden" id="date-error">„Von“ darf nicht nach „Bis“ liegen.</span>
+        </div>
+        <div class="quick-picks" id="quick-picks">
+          <button class="chip" data-range="30">Letzte 30 Tage</button>
+          <button class="chip" data-range="90">Letzte 90 Tage</button>
+          <button class="chip" data-range="ytd">Dieses Jahr</button>
+          <button class="chip" data-range="all">Alles</button>
+        </div>
+        <div class="range-caption" id="range-caption"></div>
+      </div>
+
+      <div class="tiles" id="tiles"></div>
+
+      <div class="cards">
+        <div class="card wide">
+          <h2>Performance Management Chart</h2>
+          <div class="subtitle">Fitness (CTL), Ermüdung (ATL) und Form (TSB) über die Zeit</div>
+          <div class="chart" id="chart-pmc"></div>
+        </div>
+        <div class="card">
+          <h2>Power-Kurve</h2>
+          <div class="subtitle">Beste Ø-Leistung je Zeitfenster</div>
+          <div class="chart" id="chart-power-curve"></div>
+        </div>
+        <div class="card">
+          <h2>Durability</h2>
+          <div class="subtitle">Leistung nach kumulierter Arbeit</div>
+          <div class="chart" id="chart-durability"></div>
+        </div>
+        <div class="card">
+          <h2>Leistungszonen</h2>
+          <div class="subtitle">Zeitanteil je Coggan-Zone</div>
+          <div class="chart" id="chart-power-zones"></div>
+        </div>
+        <div class="card">
+          <h2>Herzfrequenzzonen</h2>
+          <div class="subtitle">Zeitanteil je HF-Zone</div>
+          <div class="chart" id="chart-hr-zones"></div>
+        </div>
+        <div class="card wide">
+          <h2>Anstiege</h2>
+          <div class="subtitle" id="climbs-subtitle">Erkannte Anstiege, neueste zuerst</div>
+          <div class="table-scroll" id="table-climbs"></div>
+        </div>
+        <div class="card wide">
+          <h2>Fahrten</h2>
+          <div class="subtitle" id="rides-subtitle">Alle Fahrten, neueste zuerst</div>
+          <div class="table-scroll" id="table-rides"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

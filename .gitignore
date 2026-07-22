@@ -14,7 +14,17 @@ data/*
 !data/.gitkeep
 config.yaml
 *.html
+!src/ride_analytics/web/static/index.html
 *.csv
+
+# Ride data must never enter the repo
+*.fit
+*.FIT
+*.gpx
+*.tcx
+*.zip
+uploads/
+.tmp/
 
 # Tooling / prompts (not part of the project)
 CLAUDE.md
