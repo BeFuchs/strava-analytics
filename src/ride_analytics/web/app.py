@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import tempfile
 import zipfile
 from datetime import date, timedelta
@@ -33,8 +34,14 @@ from ride_analytics.clustering.climb_clusters import (
     cluster_climbs,
 )
 from ride_analytics.config import AthleteConfig
+from ride_analytics.export.csv_export import export_csv
 from ride_analytics.ingest import IngestError, Ride, load_fit
-from ride_analytics.metrics.climbs import Climb, detect_climbs, ride_elevation_gain_m
+from ride_analytics.metrics.climbs import (
+    Climb,
+    detect_climbs,
+    match_climbs,
+    ride_elevation_gain_m,
+)
 from ride_analytics.metrics.durability import compute_durability
 from ride_analytics.metrics.pmc import CTL_DAYS, compute_pmc
 from ride_analytics.metrics.power_curve import (
@@ -48,9 +55,10 @@ from ride_analytics.metrics.zones import (
     hr_zone_distribution,
     power_zone_distribution,
 )
-from ride_analytics.report.builder import AnalyzedRide
+from ride_analytics.report.builder import AnalyzedRide, ReportData
 from ride_analytics.web import charts
 from ride_analytics.web.schemas import (
+    ClusterNameRequest,
     DateRange,
     HealthResponse,
     SkippedFile,
@@ -68,6 +76,8 @@ MAX_COMPRESSION_RATIO = 100
 
 FIT_MAGIC = b".FIT"
 FIT_MAGIC_OFFSET = 8
+
+MAX_CLUSTER_NAME_LENGTH = 60
 
 _COPY_CHUNK = 1024 * 1024
 
@@ -296,7 +306,7 @@ def create_app(config: AthleteConfig) -> FastAPI:
         clusters.sort(key=lambda c: (c.ascent_count, c.last_ridden_date), reverse=True)
         return {
             "n_clusters": len(clusters),
-            "clusters": [_cluster_summary(c) for c in clusters],
+            "clusters": [_cluster_summary(c, session.cluster_names) for c in clusters],
         }
 
     @app.get("/api/climbs/clusters/{cluster_id}")
@@ -305,15 +315,68 @@ def create_app(config: AthleteConfig) -> FastAPI:
         session: Session = Depends(get_session),
         dates: tuple[date | None, date | None] = Depends(date_filter),
     ) -> dict:
-        clusters = cluster_climbs(_filtered_efforts(session, *dates))
-        cluster = next((c for c in clusters if c.cluster_id == cluster_id), None)
+        efforts = _filtered_efforts(session, *dates)
+        cluster = next((c for c in cluster_climbs(efforts) if c.cluster_id == cluster_id), None)
         if cluster is None:
             raise api_error(
                 404,
                 "cluster not found",
                 "Kein Anstieg mit dieser ID im gewählten Zeitraum.",
             )
-        return _cluster_detail(cluster)
+        return _cluster_detail(cluster, session.cluster_names, efforts)
+
+    @app.get("/api/export/csv")
+    def export_csv_zip(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> Response:
+        rides = _filtered(session, *dates)
+        if not rides:
+            raise api_error(
+                404,
+                "no rides",
+                "Keine Fahrten im gewählten Zeitraum — nichts zu exportieren.",
+            )
+        data = _report_data_for(session, *dates)
+        clusters = cluster_climbs(_filtered_efforts(session, *dates))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            written = export_csv(data, app.state.config.weight_kg, tmp_path)
+            written.append(_write_clusters_csv(clusters, session.cluster_names, tmp_path))
+
+            zip_path = tmp_path / "export.zip"
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for csv_path in written:
+                    archive.write(csv_path, csv_path.name)
+            payload = zip_path.read_bytes()
+
+        filename = _export_filename(session, *dates)
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.put("/api/climbs/clusters/{cluster_id}/name")
+    def rename_cluster(
+        cluster_id: str,
+        payload: ClusterNameRequest,
+        session: Session = Depends(get_session),
+    ) -> dict:
+        name = payload.name.strip()
+        if len(name) > MAX_CLUSTER_NAME_LENGTH:
+            raise api_error(
+                400,
+                "name too long",
+                f"Name darf höchstens {MAX_CLUSTER_NAME_LENGTH} Zeichen haben.",
+            )
+        if name:
+            session.cluster_names[cluster_id] = name
+        else:
+            # Empty name clears the override; the coordinate label takes over again.
+            session.cluster_names.pop(cluster_id, None)
+        return {"cluster_id": cluster_id, "name": session.cluster_names.get(cluster_id)}
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -562,10 +625,11 @@ def _filtered_efforts(
     return [e for e in session.climb_efforts if in_range(e)]
 
 
-def _cluster_summary(cluster: ClimbCluster) -> dict:
+def _cluster_summary(cluster: ClimbCluster, names: dict[str, str]) -> dict:
     """Cluster metadata without the per-ascent list (list view)."""
     return {
         "cluster_id": cluster.cluster_id,
+        "name": names.get(cluster.cluster_id),
         "location_label": cluster.location_label,
         "length_km": cluster.length_km,
         "avg_gradient_pct": cluster.avg_gradient_pct,
@@ -576,10 +640,27 @@ def _cluster_summary(cluster: ClimbCluster) -> dict:
     }
 
 
-def _cluster_detail(cluster: ClimbCluster) -> dict:
-    """Full cluster incl. its ascents, newest first (detail view)."""
+def _cluster_detail(
+    cluster: ClimbCluster, names: dict[str, str], efforts: list[ClimbEffort]
+) -> dict:
+    """Full cluster incl. its ascents, newest first (detail view).
+
+    Pacing quarters live on the original ``Climb`` rather than on the cluster
+    ascent, so they are looked up by start time instead of re-clustering.
+    """
+    quarters_by_start = {e.climb.start_time: e.climb.quarter_avg_power_watts for e in efforts}
+    # Chart runs oldest -> newest; a single ascent has no trend to show.
+    chronological = sorted(cluster.ascents, key=lambda a: a.date)
+    trend = (
+        charts.climb_trend_figure(
+            [a.date for a in chronological], [a.duration_s for a in chronological]
+        )
+        if len(chronological) > 1
+        else None
+    )
     return {
-        **_cluster_summary(cluster),
+        **_cluster_summary(cluster, names),
+        "trend_figure": trend,
         "ascents": [
             {
                 "date": ascent.date.date().isoformat(),
@@ -588,7 +669,77 @@ def _cluster_detail(cluster: ClimbCluster) -> dict:
                 "avg_power_watts": ascent.avg_power_watts,
                 "watts_per_kg": ascent.watts_per_kg,
                 "avg_hr": ascent.avg_hr,
+                "pacing_quarters": _clean_quarters(quarters_by_start.get(ascent.date)),
             }
             for ascent in cluster.ascents
         ],
     }
+
+
+def _clean_quarters(quarters: tuple[float, ...] | None) -> list[float | None] | None:
+    """Pacing quarters as JSON-safe values — NaN would break strict JSON parsing."""
+    if quarters is None:
+        return None
+    return [None if q is None or math.isnan(q) else q for q in quarters]
+
+
+def _report_data_for(session: Session, date_from: date | None, date_to: date | None) -> ReportData:
+    """Assemble a ReportData from the filtered session rides for CSV export.
+
+    Built from the already-computed per-ride metrics so the export matches what
+    the dashboard shows, including the 42-day PMC lead-in.
+    """
+    rides = _filtered(session, date_from, date_to)
+    return ReportData(
+        rides=rides,
+        pmc=_pmc_frame(session, date_from, date_to),
+        power_curve=aggregate_power_curve([a.power_curve for a in rides]),
+        ftp_estimate=estimate_ftp(aggregate_power_curve([a.power_curve for a in rides])),
+        power_zones=aggregate_zone_distributions([a.power_zones for a in rides]),
+        hr_zones=aggregate_zone_distributions([a.hr_zones for a in rides]),
+        durability=compute_durability([a.ride.df for a in rides]),
+        climb_groups=match_climbs([climb for a in rides for climb in a.climbs]),
+    )
+
+
+CLUSTER_CSV_COLUMNS = [
+    "cluster_id",
+    "name",
+    "location_label",
+    "length_km",
+    "avg_gradient_pct",
+    "elevation_gain_m",
+    "ascent_count",
+    "best_time_s",
+    "last_ridden_date",
+]
+
+
+def _write_clusters_csv(clusters: list[ClimbCluster], names: dict[str, str], out_dir: Path) -> Path:
+    """Write ``climb_clusters.csv``: one row per cluster, same conventions as export."""
+    rows = [
+        {
+            "cluster_id": c.cluster_id,
+            "name": names.get(c.cluster_id, ""),
+            "location_label": c.location_label,
+            "length_km": round(c.length_km, 2),
+            "avg_gradient_pct": round(c.avg_gradient_pct, 1),
+            "elevation_gain_m": round(c.elevation_gain_m),
+            "ascent_count": c.ascent_count,
+            "best_time_s": round(c.best_time_s),
+            "last_ridden_date": c.last_ridden_date.isoformat(),
+        }
+        for c in clusters
+    ]
+    frame = pd.DataFrame(rows, columns=CLUSTER_CSV_COLUMNS)
+    path = out_dir / "climb_clusters.csv"
+    frame.to_csv(path, index=False, encoding="utf-8", na_rep="")
+    return path
+
+
+def _export_filename(session: Session, date_from: date | None, date_to: date | None) -> str:
+    """Download name spanning the active range, falling back to the session range."""
+    available = _session_date_range(session)
+    start = date_from.isoformat() if date_from else available.min
+    end = date_to.isoformat() if date_to else available.max
+    return f"ride-analytics_{start}_{end}.zip"

@@ -8,6 +8,7 @@ const state = {
   dateRange: { min: null, max: null }, // available range from the upload
   activePick: null,                    // active quick-pick chip, if any
   tables: {},                          // per-table rows + sort, for re-sorting
+  selectedCluster: "",                 // "" = all climbs (flat list)
 };
 
 const el = (id) => document.getElementById(id);
@@ -222,7 +223,10 @@ async function refreshDashboard() {
     loadChart("/api/zones", params, "chart-hr-zones", (b) => b.hr),
     load("/api/rides", params, renderRides, "table-rides"),
     load("/api/climbs", params, renderClimbs, "table-climbs"),
+    load("/api/climbs/clusters", params, renderClusterOptions, "table-climbs"),
   ]);
+  // Runs last: the cluster list decides whether the current pick still exists.
+  applyClimbSelection();
 }
 
 function updateRangeCaptions() {
@@ -277,7 +281,9 @@ async function loadChart(path, params, containerId, pick) {
 
 // ---------- Renderers ----------
 
-const EMPTY = '<div class="card-empty">Keine Fahrten im gewählten Zeitraum.</div>';
+const EMPTY =
+  '<div class="card-empty">Keine Fahrten im gewählten Zeitraum. ' +
+  "Erweitere den Zeitraum oder wähle „Alles“.</div>";
 
 function renderChart(containerId, figure) {
   const node = el(containerId);
@@ -299,6 +305,8 @@ function renderChart(containerId, figure) {
 function renderTiles(summary) {
   const count = el("range-count");
   if (count) count.innerHTML = `<strong>${summary.n_rides} Fahrten</strong>`;
+  // No rides in range -> nothing to export.
+  el("export-csv").disabled = summary.n_rides === 0;
   const tiles = [
     ["Fahrten", fmtInt(summary.n_rides), ""],
     ["Distanz", fmtInt(summary.distance_km), "km"],
@@ -352,6 +360,157 @@ function renderClimbs(body) {
   renderTable("table-climbs", CLIMB_COLUMNS, body.climbs, "Keine Anstiege im gewählten Zeitraum.");
 }
 
+// ---------- Climb cluster picker ----------
+
+function clusterLabel(cluster) {
+  const parts = [
+    cluster.name || cluster.location_label,
+    `${fmtNum(cluster.length_km, 1)} km`,
+    `${fmtNum(cluster.avg_gradient_pct, 1)} %`,
+    cluster.ascent_count === 1 ? "1 Befahrung" : `${cluster.ascent_count} Befahrungen`,
+  ];
+  return parts.join(" · ");
+}
+
+function renderClusterOptions(body) {
+  const select = el("climb-select");
+  const clusters = body.clusters || [];
+  // Repeatedly ridden climbs first; one-offs are grouped at the end.
+  const repeated = clusters.filter((c) => c.ascent_count > 1);
+  const singles = clusters.filter((c) => c.ascent_count === 1);
+
+  const option = (c) => `<option value="${c.cluster_id}">${escapeHtml(clusterLabel(c))}</option>`;
+  let html = '<option value="">Alle Anstiege</option>';
+  html += repeated.map(option).join("");
+  if (singles.length) {
+    html +=
+      '<optgroup label="Einmalig gefahren">' + singles.map(option).join("") + "</optgroup>";
+  }
+  select.innerHTML = html;
+
+  // Keep the current pick when the date filter reshuffles the cluster list.
+  const stillThere = clusters.some((c) => c.cluster_id === state.selectedCluster);
+  state.selectedCluster = stillThere ? state.selectedCluster : "";
+  select.value = state.selectedCluster;
+}
+
+function onClusterSelected() {
+  state.selectedCluster = el("climb-select").value;
+  applyClimbSelection();
+}
+
+/** Show either the flat climbs table or the detail view for one cluster. */
+function applyClimbSelection() {
+  const detail = el("climb-detail");
+  const flat = el("table-climbs");
+  if (!state.selectedCluster) {
+    hide(detail);
+    show(flat);
+    return;
+  }
+  hide(flat);
+  show(detail);
+  el("climb-detail-head").innerHTML = "";
+  el("chart-climb-trend").innerHTML = "";
+  el("table-ascents").innerHTML = skeleton(200);
+  load(
+    `/api/climbs/clusters/${encodeURIComponent(state.selectedCluster)}`,
+    activeParams(),
+    renderClimbDetail,
+    "table-ascents"
+  );
+}
+
+const ASCENT_COLUMNS = [
+  { key: "date", label: "Datum", type: "date" },
+  { key: "duration_s", label: "Zeit", type: "duration" },
+  { key: "vam_m_per_h", label: "VAM", type: "num", digits: 0 },
+  { key: "avg_power_watts", label: "Ø W", type: "num", digits: 0 },
+  { key: "watts_per_kg", label: "W/kg", type: "num", digits: 1 },
+  { key: "avg_hr", label: "Ø HF", type: "num", digits: 0 },
+  { key: "pacing_quarters", label: "Pacing (Viertel)", type: "pacing" },
+];
+
+function renderClimbDetail(cluster) {
+  state.detailCluster = cluster;
+  renderDetailHead(cluster);
+
+  renderChart("chart-climb-trend", cluster.trend_figure);
+  if (!cluster.trend_figure) hide(el("chart-climb-trend"));
+  else show(el("chart-climb-trend"));
+
+  // Mark the fastest ascent so the personal best is readable, not just tinted.
+  const best = Math.min(...cluster.ascents.map((a) => a.duration_s));
+  const rows = cluster.ascents.map((a) => ({ ...a, _best: a.duration_s === best }));
+  renderTable("table-ascents", ASCENT_COLUMNS, rows, "Keine Befahrungen im Zeitraum.");
+}
+
+function detailFacts(cluster) {
+  return (
+    `${fmtNum(cluster.length_km, 1)} km · ` +
+    `${fmtNum(cluster.avg_gradient_pct, 1)} % · ` +
+    `${fmtNum(cluster.elevation_gain_m, 0)} Hm · ` +
+    `${cluster.ascent_count} Befahrungen · Bestzeit ${fmtHMS(cluster.best_time_s)}`
+  );
+}
+
+function renderDetailHead(cluster) {
+  const title = cluster.name || cluster.location_label;
+  el("climb-detail-head").innerHTML =
+    `<div class="title"><span id="climb-title">${escapeHtml(title)}</span>` +
+    `<button class="btn-rename" id="btn-rename" title="Umbenennen" aria-label="Anstieg umbenennen">✎</button></div>` +
+    `<div class="facts">${detailFacts(cluster)}</div>`;
+  el("btn-rename").addEventListener("click", startRename);
+}
+
+function startRename() {
+  const cluster = state.detailCluster;
+  const titleRow = document.querySelector("#climb-detail-head .title");
+  titleRow.innerHTML =
+    `<div class="rename-box">` +
+    `<input id="rename-input" maxlength="60" value="${escapeHtml(cluster.name || "")}" ` +
+    `placeholder="${escapeHtml(cluster.location_label)}">` +
+    `<button class="btn-primary" id="rename-save">Speichern</button>` +
+    `<span class="rename-hint">Namen gelten nur für diese Sitzung. Leer = Koordinaten.</span>` +
+    `</div>`;
+  const input = el("rename-input");
+  input.focus();
+  input.select();
+  el("rename-save").addEventListener("click", saveRename);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") saveRename();
+    if (e.key === "Escape") renderDetailHead(state.detailCluster);
+  });
+}
+
+async function saveRename() {
+  const cluster = state.detailCluster;
+  const name = el("rename-input").value.trim();
+  try {
+    const response = await fetch(
+      `/api/climbs/clusters/${encodeURIComponent(cluster.cluster_id)}/name`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Session-Id": state.sessionId },
+        body: JSON.stringify({ name }),
+      }
+    );
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || "Umbenennen fehlgeschlagen.");
+    cluster.name = body.name;
+    renderDetailHead(cluster);
+    refreshClusterOptions(); // reflect the new name in the dropdown
+  } catch (err) {
+    if (err.sessionExpired) return backToUpload();
+    renderDetailHead(cluster);
+    showGlobalError(err.message);
+  }
+}
+
+async function refreshClusterOptions() {
+  await load("/api/climbs/clusters", activeParams(), renderClusterOptions, "table-climbs");
+}
+
 function renderTable(containerId, columns, rows, emptyText) {
   if (!rows.length) {
     el(containerId).innerHTML = `<div class="card-empty">${emptyText}</div>`;
@@ -374,10 +533,14 @@ function drawTable(containerId) {
     })
     .join("");
   const body = sorted
-    .map(
-      (row) =>
-        "<tr>" + columns.map((col) => `<td>${fmtCell(row[col.key], col)}</td>`).join("") + "</tr>"
-    )
+    .map((row) => {
+      const cells = columns.map((col, i) => {
+        let content = fmtCell(row[col.key], col);
+        if (i === 0 && row._best) content += '<span class="badge-best">Bestzeit</span>';
+        return `<td>${content}</td>`;
+      });
+      return `<tr${row._best ? ' class="is-best"' : ""}>${cells.join("")}</tr>`;
+    })
     .join("");
 
   el(containerId).innerHTML =
@@ -406,6 +569,51 @@ function sortRows(rows, sort) {
   });
 }
 
+// ---------- CSV export ----------
+
+async function exportCsv() {
+  const button = el("export-csv");
+  if (button.disabled) return;
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Erzeuge …";
+  clearGlobalError();
+
+  try {
+    const url = `/api/export/csv?${activeParams()}`;
+    const response = await fetch(url, { headers: { "X-Session-Id": state.sessionId } });
+    if (response.status === 404) {
+      const body = await response.json().catch(() => ({}));
+      if (body.error === "session not found") return backToUpload();
+      throw new Error(body.detail || "Nichts zu exportieren.");
+    }
+    if (!response.ok) throw new Error("Export fehlgeschlagen.");
+    triggerDownload(await response.blob(), filenameFromResponse(response));
+  } catch (err) {
+    showGlobalError(err.message);
+  } finally {
+    button.textContent = original;
+    button.disabled = false;
+  }
+}
+
+function filenameFromResponse(response) {
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  return match ? match[1] : "ride-analytics.zip";
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ---------- Clear session ----------
 
 async function clearData() {
@@ -429,6 +637,10 @@ function fmtCell(value, col) {
   if (col.type === "date") return fmtDate(value);
   if (col.type === "text") return escapeHtml(value ?? "");
   if (col.type === "duration") return fmtHMS(value);
+  if (col.type === "pacing") {
+    if (!value) return "–";
+    return value.map((q) => (q === null ? "–" : fmtNum(q, 0))).join(" / ");
+  }
   if (col.type === "tss") {
     return value === null || value === undefined ? "–" : fmtNum(value, 0);
   }
@@ -487,6 +699,8 @@ function escapeHtml(text) {
 function boot() {
   setupUpload();
   setupFilter();
+  el("climb-select").addEventListener("change", onClusterSelected);
+  el("export-csv").addEventListener("click", exportCsv);
   el("clear-data").addEventListener("click", clearData);
   restoreSession();
 }

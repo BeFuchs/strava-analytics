@@ -24,6 +24,10 @@ class DateRange(BaseModel):
     max: str | None
 
 
+class ClusterNameRequest(BaseModel):
+    name: str
+
+
 class UploadResponse(BaseModel):
     session_id: str
     rides_processed: int

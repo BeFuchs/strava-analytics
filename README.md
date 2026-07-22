@@ -18,7 +18,13 @@ The dashboard is the fastest way in — no command per analysis, just drop your 
 ride-analytics serve            # then open http://localhost:8000
 ```
 
-On macOS you can skip the terminal entirely: double-click `run_dashboard.command` in Finder and it starts the server and opens the browser for you. Upload single `.fit` files or a whole Strava export `.zip` (drag-and-drop or file picker), then steer every panel — metric tiles, PMC, power curve, durability, zones, rides and climbs — with one global date filter.
+On macOS you can skip the terminal entirely: double-click `run_dashboard.command` in Finder and it starts the server and opens the browser for you. Upload single `.fit` files or a whole Strava export `.zip` (drag-and-drop or file picker), then steer every panel — metric tiles, PMC, power curve, durability, zones, rides and climbs — with one global date filter. Export everything in view as a CSV bundle with one click.
+
+**Climb comparison.** Pick a recurring climb from the dropdown above the climbs table to see every ascent of that hill: a header with its length, gradient and gain, a table of all efforts with your personal best highlighted, and a trend chart of time-per-ascent that shows how your form on that exact climb developed. You can rename a climb inline (a pencil next to the coordinate label) — names live only for the session.
+
+![Climb comparison](docs/climb-detail-screenshot.png)
+
+*One recurring climb: every ascent, the personal best marked, and time-per-ascent over the season. Rendered from real ride data.*
 
 **Your data stays on your machine.** Uploaded files are parsed in a temporary directory and deleted immediately; only the computed metrics stay in memory, tied to your browser session. Nothing is written to disk, there is no database, and stopping the server discards everything. The server binds to `localhost` only.
 
@@ -35,8 +41,9 @@ Why FastAPI with a plain HTML/CSS/JavaScript frontend and no framework: it keeps
 - Time in Coggan power zones (7) and heart-rate zones (5)
 - Durability analysis: power curves split by accumulated work (0–1000 / 1000–2000 / 2000–3000 / 3000+ kJ) with a durability index per window — how much power you lose once fatigue sets in; the report shows kJ or kcal, switchable with one click
 - Automatic climb detection from elevation data, no Strava segments needed: length, gain, gradients, VAM, W/kg, pacing quarters, and matching of repeated climbs with personal bests
+- Climb comparison in the dashboard: every ascent of a recurring climb, personal best highlighted, and a time-per-ascent trend chart; rename climbs inline (session-only names)
 - Period comparison (`compare`): any two date ranges or `--preset last-two-seasons`, with per-week normalization when the periods differ in length
-- CSV export of every computed metric (`--export-csv`) for further analysis in Excel/Sheets
+- CSV export of every computed metric — as CLI files (`--export-csv`) or a one-click ZIP download from the dashboard (respecting the active date filter), for further analysis in Excel/Sheets
 - One self-contained HTML report with interactive Plotly charts (works without internet), plus an optional terminal summary
 
 ## Install
@@ -121,7 +128,7 @@ To avoid this permanently, keep the project outside any cloud-synced directory.
 
 Climbs are detected from the smoothed barometric altitude alone — no Strava segments needed. A stretch counts as a climb when it averages **at least 3 % gradient, gains at least 30 m and runs at least 500 m**. These thresholds are deliberate: 3 % is where climbing starts to dominate the power demand, 30 m filters out highway ramps and railway bridges, and 500 m keeps every short kicker from flooding the list. Short flat or downhill pieces inside a climb (under 200 m or 30 s) don't end it — a hairpin road with flat corners is one climb, not twenty. Repeated climbs are matched by start location (haversine) and similar length and gain, which yields personal bests and a time trend per climb.
 
-**The same hill, ridden many times, is grouped into one stable cluster.** Two ascents join the same cluster only when all three hold: start points within **200 m** (haversine), length within **±15 %**, and elevation gain within **±15 %** — each relative tolerance backed by an absolute floor (20 m of gain, 250 m of length) so that on a small climb, barometric noise or a shifted detection boundary doesn't split one hill into two. A cluster's representative length, gain and start coordinate is the **median** across its ascents, not the mean: a single GPS-drifted outlier then can't drag the cluster off the hill the way an average would. Cluster IDs are derived deterministically from the rounded coordinate and length, so re-uploading the same export reproduces the same clusters. (The dashboard currently shows the flat list of climbs; the per-climb comparison view that consumes these clusters is on the roadmap — the clustering and its API are already built.)
+**The same hill, ridden many times, is grouped into one stable cluster.** Two ascents join the same cluster only when all three hold: start points within **200 m** (haversine), length within **±15 %**, and elevation gain within **±15 %** — each relative tolerance backed by an absolute floor (20 m of gain, 250 m of length) so that on a small climb, barometric noise or a shifted detection boundary doesn't split one hill into two. A cluster's representative length, gain and start coordinate is the **median** across its ascents, not the mean: a single GPS-drifted outlier then can't drag the cluster off the hill the way an average would. Cluster IDs are derived deterministically from the rounded coordinate and length, so re-uploading the same export reproduces the same clusters. The dashboard's climb comparison view is built on these clusters — pick one from the dropdown to compare every ascent of that hill.
 
 ## Architecture
 
@@ -161,9 +168,8 @@ pytest && ruff check
 
 ## Future work
 
-- Climb comparison view in the dashboard: pick a recurring climb, see every ascent and the time trend (the clustering and its API endpoints are already built)
-- CSV download in the dashboard (the CLI already exports CSV)
 - Training plan suggestions derived from the PMC
+- Optional persistence for climb names (they are session-only today, gone on server restart)
 - Multi-sport support beyond cycling
 - W' balance and other advanced power models
 - Route map rendering (would need external map tiles; the elevation profile stays the default)
