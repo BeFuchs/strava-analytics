@@ -1,0 +1,144 @@
+import csv
+from datetime import datetime, timedelta
+
+import pandas as pd
+import pytest
+
+from ride_analytics.config import AthleteConfig
+from ride_analytics.export.csv_export import export_csv
+from ride_analytics.ingest import Ride, RideMeta
+from ride_analytics.report.builder import build_report_data
+
+CONFIG = AthleteConfig(ftp_watts=200, threshold_hr=160, weight_kg=70.0, max_hr=190)
+START = datetime(2024, 5, 1, 8, 0, 0)
+
+EXPECTED_FILES = ("rides.csv", "pmc.csv", "power_curve.csv", "zones.csv", "durability.csv")
+
+RIDES_COLUMNS = [
+    "date",
+    "source_file",
+    "distance_km",
+    "moving_time_s",
+    "elapsed_time_s",
+    "np_watts",
+    "intensity_factor",
+    "tss",
+    "tss_estimated",
+    "variability_index",
+    "work_kj",
+    "avg_power_watts",
+    "max_power_watts",
+    "avg_hr_bpm",
+    "max_hr_bpm",
+    "avg_cadence_rpm",
+    "avg_speed_kmh",
+]
+
+
+def make_ride(name: str, start: datetime, columns: dict) -> Ride:
+    n = len(next(iter(columns.values())))
+    df = pd.DataFrame({"timestamp": [start + timedelta(seconds=i) for i in range(n)], **columns})
+    meta = RideMeta(source=name, start_time=start, duration_s=float(n), sport="cycling")
+    return Ride(metadata=meta, df=df)
+
+
+@pytest.fixture
+def report_data():
+    power_ride = make_ride(
+        "with_power.fit",
+        START,
+        {
+            "power": [200] * 3600,
+            "heart_rate": [140] * 3600,
+            "distance": [i * 8.0 for i in range(3600)],
+        },
+    )
+    hr_only = make_ride("hr_only.fit", START + timedelta(days=1), {"heart_rate": [150] * 1800})
+    return build_report_data([power_ride, hr_only], CONFIG)
+
+
+def read_rows(path):
+    with path.open(encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
+
+
+def test_writes_all_files(tmp_path, report_data):
+    written = export_csv(report_data, CONFIG.weight_kg, tmp_path / "out")
+
+    assert [p.name for p in written] == list(EXPECTED_FILES)
+    for path in written:
+        assert path.is_file()
+
+
+def test_rides_csv_columns_and_rows(tmp_path, report_data):
+    export_csv(report_data, CONFIG.weight_kg, tmp_path)
+    rows = read_rows(tmp_path / "rides.csv")
+
+    assert list(rows[0].keys()) == RIDES_COLUMNS
+    assert len(rows) == 2
+    assert rows[0]["date"] == "2024-05-01"
+    assert rows[0]["source_file"] == "with_power.fit"
+    assert float(rows[0]["np_watts"]) == pytest.approx(200.0)
+    assert rows[0]["tss_estimated"] == "false"
+    assert rows[1]["tss_estimated"] == "true"
+
+
+def test_missing_values_are_empty_fields(tmp_path, report_data):
+    export_csv(report_data, CONFIG.weight_kg, tmp_path)
+    rows = read_rows(tmp_path / "rides.csv")
+
+    # HR-only ride has no power metrics — empty fields, not 0 or NaN.
+    assert rows[1]["np_watts"] == ""
+    assert rows[1]["work_kj"] == ""
+
+    for name in EXPECTED_FILES:
+        text = (tmp_path / name).read_text(encoding="utf-8")
+        assert "NaN" not in text
+        assert "None" not in text
+
+
+def test_pmc_csv_daily_series(tmp_path, report_data):
+    export_csv(report_data, CONFIG.weight_kg, tmp_path)
+    rows = read_rows(tmp_path / "pmc.csv")
+
+    assert list(rows[0].keys()) == ["date", "tss", "ctl", "atl", "tsb"]
+    assert rows[0]["date"] == "2024-05-01"
+    assert len(rows) == 2  # two consecutive days
+    assert float(rows[0]["tss"]) == pytest.approx(100.0)  # 1 h at FTP
+
+
+def test_power_curve_csv_includes_watts_per_kg(tmp_path, report_data):
+    export_csv(report_data, CONFIG.weight_kg, tmp_path)
+    rows = read_rows(tmp_path / "power_curve.csv")
+
+    assert list(rows[0].keys()) == ["window_s", "watts", "watts_per_kg"]
+    for row in rows:
+        assert float(row["watts_per_kg"]) == pytest.approx(
+            float(row["watts"]) / CONFIG.weight_kg, abs=0.01
+        )
+
+
+def test_zones_csv_covers_power_and_hr(tmp_path, report_data):
+    export_csv(report_data, CONFIG.weight_kg, tmp_path)
+    rows = read_rows(tmp_path / "zones.csv")
+
+    assert list(rows[0].keys()) == ["zone", "type", "seconds", "percent"]
+    types = {row["type"] for row in rows}
+    assert types == {"power", "hr"}
+    power_pct = sum(float(r["percent"]) for r in rows if r["type"] == "power")
+    assert power_pct == pytest.approx(100.0, abs=0.5)
+
+
+def test_durability_csv_columns(tmp_path, report_data):
+    export_csv(report_data, CONFIG.weight_kg, tmp_path)
+    rows = read_rows(tmp_path / "durability.csv")
+
+    assert list(rows[0].keys()) == [
+        "bucket",
+        "window_s",
+        "mmp_watts",
+        "durability_index",
+        "n_rides",
+    ]
+    fresh = [r for r in rows if r["bucket"] == "0-1000 kJ" and r["window_s"] == "1200"]
+    assert float(fresh[0]["mmp_watts"]) == pytest.approx(200.0)
