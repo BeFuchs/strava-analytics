@@ -65,6 +65,24 @@
   tbody tr:last-child { border-bottom: none; }
   td.source { color: var(--ink-2); font-size: 13px; }
   .footnote { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  .unit-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-left: 10px;
+    vertical-align: 2px;
+  }
+  .unit-toggle button {
+    border: 0;
+    background: var(--surface);
+    padding: 2px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    color: var(--ink-2);
+    font-family: inherit;
+  }
+  .unit-toggle button.active { background: #2a78d6; color: #fff; }
   .index-table { width: auto; min-width: 50%; }
   td.pos { color: #178a61; }
   td.neg { color: #cf5527; }
@@ -131,7 +149,10 @@
 <main>
   <header>
     <h1>Ride Analytics — Training Report</h1>
-    <p>{{ totals.period }} · generated {{ generated }} · FTP {{ config.ftp_watts }} W ({{ ftp_wkg }} W/kg)</p>
+    <p>
+      {{ totals.period }} · generated {{ generated }} · FTP {{ config.ftp_watts }} W ({{ ftp_wkg }} W/kg)
+      <span class="unit-toggle" id="unit-toggle" title="Energy unit for work values"><button data-unit="kJ" class="active">kJ</button><button data-unit="kcal">kcal</button></span>
+    </p>
   </header>
 
   <div class="tiles">
@@ -163,18 +184,18 @@
   <section>
     <h2>Durability</h2>
     <p class="section-note">
-      Best power after 0–1000, 1000–2000, 2000–3000 and 3000+ kJ of accumulated work.
+      <span class="energy-unit">Best power after 0–1000, 1000–2000, 2000–3000 and 3000+ kJ of accumulated work.</span>
       The gap between the curves is your fatigue resistance; the table shows each bucket
       relative to fresh (1.00 = no fade).
     </p>
     <div class="card">
-      {% if durability_div %}{{ durability_div | safe }}{% else %}<p class="empty">Durability needs rides with power data.</p>{% endif %}
+      {% if durability_div %}<div id="durability-chart">{{ durability_div | safe }}</div>{% else %}<p class="empty">Durability needs rides with power data.</p>{% endif %}
     </div>
     {% if durability_index %}
     <div class="card" style="margin-top: 12px;">
       <table class="index-table">
         <thead>
-          <tr><th>Window</th>{% for bucket in durability_index.buckets %}<th>{{ bucket }}</th>{% endfor %}</tr>
+          <tr><th>Window</th>{% for bucket in durability_index.buckets %}<th class="energy-unit">{{ bucket }}</th>{% endfor %}</tr>
         </thead>
         <tbody>
           {% for row in durability_index.rows %}
@@ -185,6 +206,11 @@
           {% endfor %}
         </tbody>
       </table>
+      <p class="footnote">
+        kJ of mechanical work ≈ kcal burned: at the typical ~24 % gross efficiency the
+        conversion factors cancel, so switching the unit changes the label, not the numbers —
+        matching what head units report as calories.
+      </p>
     </div>
     {% endif %}
   </section>
@@ -212,7 +238,7 @@
         <thead>
           <tr>
             <th>Date</th><th>km</th><th>Gain (m)</th><th>Avg %</th><th>Max %</th>
-            <th>Time</th><th>VAM</th><th>Ø W</th><th>W/kg</th><th>Pacing ¼ (W)</th><th>kJ before</th><th>Efforts</th>
+            <th>Time</th><th>VAM</th><th>Ø W</th><th>W/kg</th><th>Pacing ¼ (W)</th><th class="energy-unit">kJ before</th><th>Efforts</th>
           </tr>
         </thead>
         <tbody>
@@ -311,6 +337,34 @@
         .forEach(tr => tbody.appendChild(tr));
     });
   });
+
+  // kJ/kcal toggle. In cycling both are numerically equal (~24 % gross efficiency
+  // cancels the 4.184 factor), so only labels swap — in text and in the chart legend.
+  const unitToggle = document.getElementById("unit-toggle");
+  if (unitToggle) {
+    const plot = document.querySelector("#durability-chart .js-plotly-plot");
+    const originalNames = plot ? plot.data.map(t => t.name) : [];
+    const originalHovers = plot ? plot.data.map(t => t.hovertemplate) : [];
+    const apply = (unit) => {
+      const swap = (s) => unit === "kcal" ? s.replace(/kJ/g, "kcal") : s;
+      document.querySelectorAll(".energy-unit").forEach(el => {
+        if (!el.dataset.kj) el.dataset.kj = el.textContent;
+        el.textContent = swap(el.dataset.kj);
+      });
+      if (plot) {
+        Plotly.restyle(plot, {
+          name: originalNames.map(swap),
+          hovertemplate: originalHovers.map(swap),
+        });
+      }
+      unitToggle.querySelectorAll("button").forEach(b =>
+        b.classList.toggle("active", b.dataset.unit === unit));
+      localStorage.setItem("ride-analytics-energy-unit", unit);
+    };
+    unitToggle.querySelectorAll("button").forEach(b =>
+      b.addEventListener("click", () => apply(b.dataset.unit)));
+    if (localStorage.getItem("ride-analytics-energy-unit") === "kcal") apply("kcal");
+  }
 </script>
 </body>
 </html>

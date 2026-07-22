@@ -18,7 +18,7 @@ Strava tightened its API terms in 2026: API data may not be fed into AI models, 
 - Mean-maximal power curve (5 s to 60 min) per ride and across the whole history, with an FTP estimate from the best 20-min effort
 - Performance Management Chart: CTL, ATL and TSB as a day-continuous series
 - Time in Coggan power zones (7) and heart-rate zones (5)
-- Durability analysis: power curves split by accumulated work (0–1000 / 1000–2000 / 2000–3000 / 3000+ kJ) with a durability index per window — how much power you lose once fatigue sets in
+- Durability analysis: power curves split by accumulated work (0–1000 / 1000–2000 / 2000–3000 / 3000+ kJ) with a durability index per window — how much power you lose once fatigue sets in; the report shows kJ or kcal, switchable with one click
 - Automatic climb detection from elevation data, no Strava segments needed: length, gain, gradients, VAM, W/kg, pacing quarters, and matching of repeated climbs with personal bests
 - Period comparison (`compare`): any two date ranges or `--preset last-two-seasons`, with per-week normalization when the periods differ in length
 - CSV export of every computed metric (`--export-csv`) for further analysis in Excel/Sheets
@@ -70,7 +70,7 @@ ride-analytics compare path/to/activities --period-a 2025-01-01:2025-06-30 --per
 
 **Variability Index (VI)** is NP divided by average power. A steady time trial sits near 1.0; a criterium or group ride sits well above.
 
-**Durability** is how much power you still produce after work has piled up. Each ride is split by accumulated work into kJ buckets, and the best efforts are computed inside each bucket separately, so your fresh 20-min best and your 20-min best after 2,000 kJ become two different numbers. The durability index compares each bucket to the fresh one: 0.85 means 15 % of your power is gone at that depth of fatigue — a dimension Strava doesn't show at all.
+**Durability** is how much power you still produce after work has piled up. Each ride is split by accumulated work into kJ buckets, and the best efforts are computed inside each bucket separately, so your fresh 20-min best and your 20-min best after 2,000 kJ become two different numbers. The durability index compares each bucket to the fresh one: 0.85 means 15 % of your power is gone at that depth of fatigue — a dimension Strava doesn't show at all. The report displays the buckets in kJ or kcal (toggle in the header); in cycling the two are numerically almost identical, because the ~24 % gross efficiency cancels the 4.184 conversion factor — which is why your head unit's calorie number tracks the kJ of work so closely.
 
 ![Durability section](docs/durability-screenshot.png)
 
