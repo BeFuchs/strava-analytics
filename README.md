@@ -59,6 +59,26 @@ ride-analytics analyze path/to/activities --report report.html --summary
 
 **Variability Index (VI)** is NP divided by average power. A steady time trial sits near 1.0; a criterium or group ride sits well above.
 
+## Troubleshooting
+
+**`ModuleNotFoundError: No module named 'ride_analytics'` after `pip install -e .`**
+
+This happens when `.venv` lives inside a cloud-synced folder (iCloud Drive's
+Desktop & Documents sync, Dropbox, OneDrive, Google Drive). These services
+often fail to sync the Python symlinks inside `.venv/bin` correctly, leaving
+a broken virtual environment even though installation reports no errors.
+
+Fix — recreate the virtual environment:
+
+```bash
+rm -rf .venv
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+To avoid this permanently, keep the project outside any cloud-synced directory.
+
 ## Architecture
 
 ```
