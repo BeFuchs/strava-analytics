@@ -200,6 +200,16 @@ main {
 }
 .chip:hover { background: var(--champagne-dark); }
 .chip.active { background: var(--emerald-ink); color: var(--champagne); border-color: var(--emerald-ink); }
+.btn-export {
+  background: var(--emerald-ink);
+  color: var(--champagne);
+  padding: 9px 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn-export:hover:not(:disabled) { background: var(--emerald-light); }
+.btn-export:disabled { opacity: 0.5; cursor: not-allowed; }
 .range-caption {
   margin-left: auto;
   font-size: 0.85rem;

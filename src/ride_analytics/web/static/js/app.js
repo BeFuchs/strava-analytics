@@ -303,6 +303,8 @@ function renderChart(containerId, figure) {
 function renderTiles(summary) {
   const count = el("range-count");
   if (count) count.innerHTML = `<strong>${summary.n_rides} Fahrten</strong>`;
+  // No rides in range -> nothing to export.
+  el("export-csv").disabled = summary.n_rides === 0;
   const tiles = [
     ["Fahrten", fmtInt(summary.n_rides), ""],
     ["Distanz", fmtInt(summary.distance_km), "km"],
@@ -565,6 +567,51 @@ function sortRows(rows, sort) {
   });
 }
 
+// ---------- CSV export ----------
+
+async function exportCsv() {
+  const button = el("export-csv");
+  if (button.disabled) return;
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Erzeuge …";
+  clearGlobalError();
+
+  try {
+    const url = `/api/export/csv?${activeParams()}`;
+    const response = await fetch(url, { headers: { "X-Session-Id": state.sessionId } });
+    if (response.status === 404) {
+      const body = await response.json().catch(() => ({}));
+      if (body.error === "session not found") return backToUpload();
+      throw new Error(body.detail || "Nichts zu exportieren.");
+    }
+    if (!response.ok) throw new Error("Export fehlgeschlagen.");
+    triggerDownload(await response.blob(), filenameFromResponse(response));
+  } catch (err) {
+    showGlobalError(err.message);
+  } finally {
+    button.textContent = original;
+    button.disabled = false;
+  }
+}
+
+function filenameFromResponse(response) {
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  return match ? match[1] : "ride-analytics.zip";
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ---------- Clear session ----------
 
 async function clearData() {
@@ -651,6 +698,7 @@ function boot() {
   setupUpload();
   setupFilter();
   el("climb-select").addEventListener("change", onClusterSelected);
+  el("export-csv").addEventListener("click", exportCsv);
   el("clear-data").addEventListener("click", clearData);
   restoreSession();
 }
