@@ -17,6 +17,12 @@ from plotly.offline import get_plotlyjs
 
 from ride_analytics.config import AthleteConfig
 from ride_analytics.ingest import Ride
+from ride_analytics.metrics.climbs import (
+    Climb,
+    detect_climbs,
+    match_climbs,
+    ride_elevation_gain_m,
+)
 from ride_analytics.metrics.durability import compute_durability
 from ride_analytics.metrics.pmc import compute_pmc
 from ride_analytics.metrics.power_curve import (
@@ -70,6 +76,8 @@ class AnalyzedRide:
     power_curve: dict[int, float]
     power_zones: ZoneDistribution | None
     hr_zones: ZoneDistribution | None
+    climbs: list[Climb]
+    elevation_gain_m: float | None
 
 
 @dataclass(frozen=True)
@@ -81,6 +89,7 @@ class ReportData:
     power_zones: ZoneDistribution | None
     hr_zones: ZoneDistribution | None
     durability: pd.DataFrame
+    climb_groups: list[list[Climb]]
 
 
 def build_report_data(rides: list[Ride], config: AthleteConfig) -> ReportData:
@@ -92,6 +101,8 @@ def build_report_data(rides: list[Ride], config: AthleteConfig) -> ReportData:
             power_curve=ride_power_curve(ride.df),
             power_zones=power_zone_distribution(ride.df, config),
             hr_zones=hr_zone_distribution(ride.df, config),
+            climbs=detect_climbs(ride.df, config),
+            elevation_gain_m=ride_elevation_gain_m(ride.df),
         )
         for ride in rides
     ]
@@ -114,6 +125,7 @@ def build_report_data(rides: list[Ride], config: AthleteConfig) -> ReportData:
         power_zones=aggregate_zone_distributions([a.power_zones for a in analyzed]),
         hr_zones=aggregate_zone_distributions([a.hr_zones for a in analyzed]),
         durability=compute_durability([ride.df for ride in rides]),
+        climb_groups=match_climbs([climb for a in analyzed for climb in a.climbs]),
     )
 
 

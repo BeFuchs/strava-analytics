@@ -5,19 +5,28 @@ import pandas as pd
 import pytest
 
 from ride_analytics.config import AthleteConfig
-from ride_analytics.export.csv_export import export_csv
+from ride_analytics.export.csv_export import CLIMB_COLUMNS, export_csv
 from ride_analytics.ingest import Ride, RideMeta
 from ride_analytics.report.builder import build_report_data
+from test_climbs import track_df
 
 CONFIG = AthleteConfig(ftp_watts=200, threshold_hr=160, weight_kg=70.0, max_hr=190)
 START = datetime(2024, 5, 1, 8, 0, 0)
 
-EXPECTED_FILES = ("rides.csv", "pmc.csv", "power_curve.csv", "zones.csv", "durability.csv")
+EXPECTED_FILES = (
+    "rides.csv",
+    "pmc.csv",
+    "power_curve.csv",
+    "zones.csv",
+    "durability.csv",
+    "climbs.csv",
+)
 
 RIDES_COLUMNS = [
     "date",
     "source_file",
     "distance_km",
+    "elevation_gain_m",
     "moving_time_s",
     "elapsed_time_s",
     "np_watts",
@@ -127,6 +136,39 @@ def test_zones_csv_covers_power_and_hr(tmp_path, report_data):
     assert types == {"power", "hr"}
     power_pct = sum(float(r["percent"]) for r in rows if r["type"] == "power")
     assert power_pct == pytest.approx(100.0, abs=0.5)
+
+
+def test_climbs_csv_empty_without_altitude_data(tmp_path, report_data):
+    export_csv(report_data, CONFIG.weight_kg, tmp_path)
+
+    rows = read_rows(tmp_path / "climbs.csv")
+    assert rows == []
+    header = (tmp_path / "climbs.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert header == ",".join(CLIMB_COLUMNS)
+
+
+def test_climbs_csv_lists_detected_climbs(tmp_path):
+    df = track_df([(1000, 0.0, 150), (3000, 0.06, 250), (1000, 0.0, 150)])
+    ride = Ride(
+        metadata=RideMeta(source="climb.fit", start_time=START, duration_s=1000.0, sport="cycling"),
+        df=df,
+    )
+    data = build_report_data([ride], CONFIG)
+
+    export_csv(data, CONFIG.weight_kg, tmp_path)
+
+    rows = read_rows(tmp_path / "climbs.csv")
+    assert len(rows) == 1
+    climb = rows[0]
+    assert list(climb.keys()) == CLIMB_COLUMNS
+    assert climb["source_file"] == "climb.fit"
+    assert float(climb["elevation_gain_m"]) == pytest.approx(180.0, abs=3.0)
+    assert float(climb["avg_gradient_pct"]) == pytest.approx(6.0, abs=0.2)
+    assert climb["matched_climb_id"] == "0"
+    assert climb["start_lat"] == ""  # synthetic track has no GPS
+
+    rides = read_rows(tmp_path / "rides.csv")
+    assert float(rides[0]["elevation_gain_m"]) == pytest.approx(180.0, abs=5.0)
 
 
 def test_durability_csv_columns(tmp_path, report_data):

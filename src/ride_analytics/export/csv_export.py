@@ -29,6 +29,7 @@ def export_csv(data: ReportData, weight_kg: float, out_dir: str | Path) -> list[
         _write(_power_curve_frame(data, weight_kg), out_dir / "power_curve.csv"),
         _write(_zones_frame(data), out_dir / "zones.csv"),
         _write(durability, out_dir / "durability.csv"),
+        _write(_climbs_frame(data), out_dir / "climbs.csv"),
     ]
     return written
 
@@ -47,6 +48,7 @@ def _rides_frame(data: ReportData) -> pd.DataFrame:
                 "date": f"{a.ride.metadata.start_time:%Y-%m-%d}",
                 "source_file": a.ride.metadata.source,
                 "distance_km": _round(m.distance_km, 2),
+                "elevation_gain_m": _round(a.elevation_gain_m, 0),
                 "moving_time_s": round(m.moving_time_s),
                 "elapsed_time_s": round(m.elapsed_time_s),
                 "np_watts": _round(m.np_watts, 1),
@@ -102,7 +104,68 @@ def _zones_frame(data: ReportData) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["zone", "type", "seconds", "percent"])
 
 
+CLIMB_COLUMNS = [
+    "date",
+    "source_file",
+    "start_offset_s",
+    "length_m",
+    "elevation_gain_m",
+    "avg_gradient_pct",
+    "max_gradient_pct",
+    "duration_s",
+    "avg_speed_kmh",
+    "vam_m_per_h",
+    "avg_power_watts",
+    "np_watts",
+    "watts_per_kg",
+    "q1_avg_power_watts",
+    "q2_avg_power_watts",
+    "q3_avg_power_watts",
+    "q4_avg_power_watts",
+    "kj_before_climb",
+    "start_lat",
+    "start_lon",
+    "matched_climb_id",
+]
+
+
+def _climbs_frame(data: ReportData) -> pd.DataFrame:
+    group_of = {
+        id(climb): group_id for group_id, group in enumerate(data.climb_groups) for climb in group
+    }
+    rows = []
+    for a in data.rides:
+        for climb in a.climbs:
+            quarters = climb.quarter_avg_power_watts or (None,) * 4
+            rows.append(
+                {
+                    "date": f"{climb.start_time:%Y-%m-%d}",
+                    "source_file": a.ride.metadata.source,
+                    "start_offset_s": round(climb.start_offset_s),
+                    "length_m": round(climb.length_m),
+                    "elevation_gain_m": _round(climb.elevation_gain_m, 1),
+                    "avg_gradient_pct": _round(climb.avg_gradient_pct, 1),
+                    "max_gradient_pct": _round(climb.max_gradient_pct, 1),
+                    "duration_s": round(climb.duration_s),
+                    "avg_speed_kmh": _round(climb.avg_speed_kmh, 1),
+                    "vam_m_per_h": _round(climb.vam_m_per_h, 0),
+                    "avg_power_watts": _round(climb.avg_power_watts, 1),
+                    "np_watts": _round(climb.np_watts, 1),
+                    "watts_per_kg": _round(climb.watts_per_kg, 2),
+                    "q1_avg_power_watts": _round(quarters[0], 1),
+                    "q2_avg_power_watts": _round(quarters[1], 1),
+                    "q3_avg_power_watts": _round(quarters[2], 1),
+                    "q4_avg_power_watts": _round(quarters[3], 1),
+                    "kj_before_climb": _round(climb.kj_before_climb, 1),
+                    "start_lat": _round(climb.start_lat, 6),
+                    "start_lon": _round(climb.start_lon, 6),
+                    "matched_climb_id": group_of[id(climb)],
+                }
+            )
+    return pd.DataFrame(rows, columns=CLIMB_COLUMNS)
+
+
 def _round(value: float | None, digits: int) -> float | None:
-    if value is None:
+    if value is None or pd.isna(value):
         return None
     return round(value, digits)
