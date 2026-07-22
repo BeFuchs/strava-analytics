@@ -6,10 +6,21 @@ from __future__ import annotations
 
 import tempfile
 import zipfile
+from datetime import date, timedelta
 from pathlib import Path
 from typing import BinaryIO
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+import pandas as pd
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -18,11 +29,22 @@ from plotly.offline import get_plotlyjs
 from ride_analytics.clustering.climb_clusters import ClimbEffort, climb_avg_hr
 from ride_analytics.config import AthleteConfig
 from ride_analytics.ingest import IngestError, Ride, load_fit
-from ride_analytics.metrics.climbs import detect_climbs, ride_elevation_gain_m
-from ride_analytics.metrics.power_curve import ride_power_curve
+from ride_analytics.metrics.climbs import Climb, detect_climbs, ride_elevation_gain_m
+from ride_analytics.metrics.durability import compute_durability
+from ride_analytics.metrics.pmc import CTL_DAYS, compute_pmc
+from ride_analytics.metrics.power_curve import (
+    aggregate_power_curve,
+    estimate_ftp,
+    ride_power_curve,
+)
 from ride_analytics.metrics.single_ride import compute_ride_metrics
-from ride_analytics.metrics.zones import hr_zone_distribution, power_zone_distribution
+from ride_analytics.metrics.zones import (
+    aggregate_zone_distributions,
+    hr_zone_distribution,
+    power_zone_distribution,
+)
 from ride_analytics.report.builder import AnalyzedRide
+from ride_analytics.web import charts
 from ride_analytics.web.schemas import (
     DateRange,
     HealthResponse,
@@ -156,6 +178,103 @@ def create_app(config: AthleteConfig) -> FastAPI:
             skip_reasons=skipped,
             date_range=_session_date_range(session),
         )
+
+    def date_filter(
+        date_from: date | None = Query(default=None),
+        date_to: date | None = Query(default=None),
+    ) -> tuple[date | None, date | None]:
+        if date_from is not None and date_to is not None and date_from > date_to:
+            raise api_error(400, "invalid range", "„Von“ liegt nach „Bis“.")
+        return date_from, date_to
+
+    @app.get("/api/summary")
+    def summary(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> dict:
+        rides = _filtered(session, *dates)
+        curve = aggregate_power_curve([a.power_curve for a in rides])
+        pmc = _pmc_frame(session, *dates)
+        return {
+            "n_rides": len(rides),
+            "distance_km": sum(a.metrics.distance_km or 0.0 for a in rides),
+            "elevation_gain_m": sum(a.elevation_gain_m or 0.0 for a in rides),
+            "moving_time_s": sum(a.metrics.moving_time_s for a in rides),
+            "total_tss": sum(a.metrics.tss or 0.0 for a in rides),
+            "avg_ctl": float(pmc["ctl"].mean()) if not pmc.empty else None,
+            "ftp_estimate_watts": estimate_ftp(curve),
+        }
+
+    @app.get("/api/pmc")
+    def pmc(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> dict:
+        frame = _pmc_frame(session, *dates)
+        return {
+            "n_rides": len(_filtered(session, *dates)),
+            "figure": charts.pmc_figure(frame) if not frame.empty else None,
+        }
+
+    @app.get("/api/power-curve")
+    def power_curve(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> dict:
+        rides = _filtered(session, *dates)
+        curve = aggregate_power_curve([a.power_curve for a in rides])
+        return {
+            "n_rides": len(rides),
+            "figure": charts.power_curve_figure(curve) if curve else None,
+            "ftp_estimate_watts": estimate_ftp(curve),
+        }
+
+    @app.get("/api/durability")
+    def durability(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> dict:
+        rides = _filtered(session, *dates)
+        table = compute_durability([a.ride.df for a in rides])
+        has_data = (not table.empty) and table["mmp_watts"].notna().any()
+        return {
+            "n_rides": len(rides),
+            "figure": charts.durability_figure(table) if has_data else None,
+            "index": _durability_index(table) if has_data else None,
+        }
+
+    @app.get("/api/zones")
+    def zones(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> dict:
+        rides = _filtered(session, *dates)
+        power = aggregate_zone_distributions([a.power_zones for a in rides])
+        hr = aggregate_zone_distributions([a.hr_zones for a in rides])
+        return {
+            "n_rides": len(rides),
+            "power": charts.zones_figure(power, charts.POWER_RAMP) if power else None,
+            "hr": charts.zones_figure(hr, charts.HR_RAMP) if hr else None,
+        }
+
+    @app.get("/api/rides")
+    def rides_table(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> dict:
+        rides = _filtered(session, *dates)
+        rides.sort(key=lambda a: a.ride.metadata.start_time, reverse=True)
+        return {"n_rides": len(rides), "rides": [_ride_row(a) for a in rides]}
+
+    @app.get("/api/climbs")
+    def climbs_table(
+        session: Session = Depends(get_session),
+        dates: tuple[date | None, date | None] = Depends(date_filter),
+    ) -> dict:
+        rides = _filtered(session, *dates)
+        climbs = [climb for a in rides for climb in a.climbs]
+        climbs.sort(key=lambda c: c.start_time, reverse=True)
+        return {"n_climbs": len(climbs), "climbs": [_climb_row(c) for c in climbs]}
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -303,3 +422,90 @@ def _session_date_range(session: Session) -> DateRange:
         return DateRange(min=None, max=None)
     starts = [a.ride.metadata.start_time.date() for a in session.analyzed]
     return DateRange(min=min(starts).isoformat(), max=max(starts).isoformat())
+
+
+def _filtered(session: Session, date_from: date | None, date_to: date | None) -> list[AnalyzedRide]:
+    """Rides whose start date falls inside the inclusive range."""
+
+    def in_range(analyzed: AnalyzedRide) -> bool:
+        day = analyzed.ride.metadata.start_time.date()
+        return (date_from is None or day >= date_from) and (date_to is None or day <= date_to)
+
+    return [a for a in session.analyzed if in_range(a)]
+
+
+def _pmc_frame(session: Session, date_from: date | None, date_to: date | None) -> pd.DataFrame:
+    """PMC series for the displayed range.
+
+    CTL/ATL are exponentially weighted histories — computing them only from the
+    filtered range would restart fitness at zero on the filter boundary. So the
+    model runs with a 42-day lead-in before ``date_from`` and the series is
+    trimmed to the displayed range afterwards.
+    """
+    lead_from = date_from - timedelta(days=CTL_DAYS) if date_from else None
+    rides = _filtered(session, lead_from, date_to)
+    frame = compute_pmc(
+        pd.DataFrame(
+            {
+                "date": [a.ride.metadata.start_time for a in rides],
+                "tss": [a.metrics.tss for a in rides],
+            }
+        )
+    )
+    if frame.empty:
+        return frame
+    if date_from is not None:
+        frame = frame[frame["date"] >= pd.Timestamp(date_from)]
+    if date_to is not None:
+        frame = frame[frame["date"] <= pd.Timestamp(date_to)]
+    return frame.reset_index(drop=True)
+
+
+def _durability_index(durability: pd.DataFrame) -> dict:
+    """Durability index per window x bucket for the dashboard's mini table."""
+    buckets = list(dict.fromkeys(durability["bucket"]))
+    windows = sorted(durability["window_s"].unique())
+    by_key = {
+        (row["bucket"], row["window_s"]): row["durability_index"]
+        for _, row in durability.iterrows()
+    }
+    rows = []
+    for window in windows:
+        cells = [
+            None if (value := by_key.get((bucket, window))) is None or pd.isna(value) else value
+            for bucket in buckets
+        ]
+        rows.append({"window": charts.WINDOW_LABELS.get(window, f"{window}s"), "cells": cells})
+    return {"buckets": buckets, "rows": rows}
+
+
+def _ride_row(analyzed: AnalyzedRide) -> dict:
+    meta = analyzed.ride.metadata
+    m = analyzed.metrics
+    return {
+        "date": meta.start_time.date().isoformat(),
+        "source": meta.source,
+        "distance_km": m.distance_km,
+        "moving_time_s": m.moving_time_s,
+        "elevation_gain_m": analyzed.elevation_gain_m,
+        "np_watts": m.np_watts,
+        "intensity_factor": m.intensity_factor,
+        "tss": m.tss,
+        "tss_estimated": m.tss_estimated,
+        "avg_hr": m.avg_hr,
+    }
+
+
+def _climb_row(climb: Climb) -> dict:
+    return {
+        "date": climb.start_time.date().isoformat(),
+        "length_km": climb.length_m / 1000,
+        "elevation_gain_m": climb.elevation_gain_m,
+        "avg_gradient_pct": climb.avg_gradient_pct,
+        "max_gradient_pct": climb.max_gradient_pct,
+        "duration_s": climb.duration_s,
+        "vam_m_per_h": climb.vam_m_per_h,
+        "avg_power_watts": climb.avg_power_watts,
+        "watts_per_kg": climb.watts_per_kg,
+        "kj_before_climb": climb.kj_before_climb,
+    }

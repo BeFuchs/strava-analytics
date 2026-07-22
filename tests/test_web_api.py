@@ -122,6 +122,94 @@ def test_missing_session_returns_404(client):
     assert response.json()["error"] == "session not found"
 
 
+@pytest.fixture
+def seeded(client, tmp_path):
+    """Session with three rides in May, June and July 2024; returns headers."""
+    files = [
+        (f"ride{i}.fit", fit_bytes(tmp_path, start=datetime(2024, month, 1, 8, 0)))
+        for i, month in enumerate((5, 6, 7))
+    ]
+    session_id = upload(client, files).json()["session_id"]
+    return {"X-Session-Id": session_id}
+
+
+def test_rides_sorted_by_date_descending(client, seeded):
+    body = client.get("/api/rides", headers=seeded).json()
+    assert [r["date"] for r in body["rides"]] == ["2024-07-01", "2024-06-01", "2024-05-01"]
+
+
+def test_date_filter_limits_rides(client, seeded):
+    response = client.get(
+        "/api/rides",
+        params={"date_from": "2024-05-15", "date_to": "2024-06-15"},
+        headers=seeded,
+    )
+    body = response.json()
+    assert body["n_rides"] == 1
+    assert body["rides"][0]["date"] == "2024-06-01"
+
+
+def test_date_filter_bounds_are_inclusive(client, seeded):
+    response = client.get(
+        "/api/rides",
+        params={"date_from": "2024-06-01", "date_to": "2024-06-01"},
+        headers=seeded,
+    )
+    assert response.json()["n_rides"] == 1
+
+
+def test_inverted_date_range_is_rejected(client, seeded):
+    response = client.get(
+        "/api/rides",
+        params={"date_from": "2024-07-01", "date_to": "2024-05-01"},
+        headers=seeded,
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid range"
+
+
+def test_malformed_date_is_rejected(client, seeded):
+    response = client.get("/api/rides", params={"date_from": "not-a-date"}, headers=seeded)
+    assert response.status_code == 400
+
+
+def test_data_endpoints_require_session(client):
+    for path in ("/api/summary", "/api/pmc", "/api/rides", "/api/climbs", "/api/zones"):
+        assert client.get(path).status_code == 404
+
+
+def test_summary_metrics(client, seeded):
+    body = client.get("/api/summary", headers=seeded).json()
+    assert body["n_rides"] == 3
+    assert body["total_tss"] > 0  # rides carry power -> real TSS
+    assert body["moving_time_s"] > 0
+    assert body["avg_ctl"] is not None
+
+
+def test_pmc_figure_present(client, seeded):
+    body = client.get("/api/pmc", headers=seeded).json()
+    assert body["n_rides"] == 3
+    assert body["figure"] is not None
+    assert body["figure"]["data"]  # plotly traces
+
+
+def test_zones_figures_present(client, seeded):
+    body = client.get("/api/zones", headers=seeded).json()
+    assert body["power"] is not None
+    assert body["hr"] is not None
+
+
+def test_empty_range_returns_empty_state(client, seeded):
+    params = {"date_from": "2023-01-01", "date_to": "2023-12-31"}
+    rides = client.get("/api/rides", params=params, headers=seeded).json()
+    assert rides == {"n_rides": 0, "rides": []}
+    pmc = client.get("/api/pmc", params=params, headers=seeded).json()
+    assert pmc == {"n_rides": 0, "figure": None}
+    summary = client.get("/api/summary", params=params, headers=seeded).json()
+    assert summary["n_rides"] == 0
+    assert summary["avg_ctl"] is None
+
+
 def test_delete_session(client, tmp_path):
     session_id = upload(client, [("ride.fit", fit_bytes(tmp_path))]).json()["session_id"]
     response = client.delete("/api/session", headers={"X-Session-Id": session_id})
