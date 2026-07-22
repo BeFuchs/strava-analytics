@@ -303,6 +303,30 @@ main {
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
+.btn-rename {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px;
+  color: var(--emerald-light);
+}
+.btn-rename:hover { background: var(--champagne-dark); }
+.rename-box { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rename-box input {
+  font-family: inherit;
+  font-size: 0.95rem;
+  padding: 5px 9px;
+  border: 1px solid var(--champagne-dark);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  min-width: 200px;
+}
+.rename-box .btn-primary { margin-top: 0; padding: 6px 14px; font-size: 0.85rem; }
+.rename-hint { font-size: 0.72rem; color: var(--text-secondary); }
 
 /* Personal best: tinted row plus a text badge — never colour alone. */
 tbody tr.is-best { background: rgba(6, 78, 59, 0.07); }

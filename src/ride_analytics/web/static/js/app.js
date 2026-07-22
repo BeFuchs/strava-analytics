@@ -428,13 +428,8 @@ const ASCENT_COLUMNS = [
 ];
 
 function renderClimbDetail(cluster) {
-  const title = cluster.name || cluster.location_label;
-  el("climb-detail-head").innerHTML =
-    `<div class="title"><span id="climb-title">${escapeHtml(title)}</span></div>` +
-    `<div class="facts">${fmtNum(cluster.length_km, 1)} km · ` +
-    `${fmtNum(cluster.avg_gradient_pct, 1)} % · ` +
-    `${fmtNum(cluster.elevation_gain_m, 0)} Hm · ` +
-    `${cluster.ascent_count} Befahrungen · Bestzeit ${fmtHMS(cluster.best_time_s)}</div>`;
+  state.detailCluster = cluster;
+  renderDetailHead(cluster);
 
   renderChart("chart-climb-trend", cluster.trend_figure);
   if (!cluster.trend_figure) hide(el("chart-climb-trend"));
@@ -444,6 +439,72 @@ function renderClimbDetail(cluster) {
   const best = Math.min(...cluster.ascents.map((a) => a.duration_s));
   const rows = cluster.ascents.map((a) => ({ ...a, _best: a.duration_s === best }));
   renderTable("table-ascents", ASCENT_COLUMNS, rows, "Keine Befahrungen im Zeitraum.");
+}
+
+function detailFacts(cluster) {
+  return (
+    `${fmtNum(cluster.length_km, 1)} km · ` +
+    `${fmtNum(cluster.avg_gradient_pct, 1)} % · ` +
+    `${fmtNum(cluster.elevation_gain_m, 0)} Hm · ` +
+    `${cluster.ascent_count} Befahrungen · Bestzeit ${fmtHMS(cluster.best_time_s)}`
+  );
+}
+
+function renderDetailHead(cluster) {
+  const title = cluster.name || cluster.location_label;
+  el("climb-detail-head").innerHTML =
+    `<div class="title"><span id="climb-title">${escapeHtml(title)}</span>` +
+    `<button class="btn-rename" id="btn-rename" title="Umbenennen" aria-label="Anstieg umbenennen">✎</button></div>` +
+    `<div class="facts">${detailFacts(cluster)}</div>`;
+  el("btn-rename").addEventListener("click", startRename);
+}
+
+function startRename() {
+  const cluster = state.detailCluster;
+  const titleRow = document.querySelector("#climb-detail-head .title");
+  titleRow.innerHTML =
+    `<div class="rename-box">` +
+    `<input id="rename-input" maxlength="60" value="${escapeHtml(cluster.name || "")}" ` +
+    `placeholder="${escapeHtml(cluster.location_label)}">` +
+    `<button class="btn-primary" id="rename-save">Speichern</button>` +
+    `<span class="rename-hint">Namen gelten nur für diese Sitzung. Leer = Koordinaten.</span>` +
+    `</div>`;
+  const input = el("rename-input");
+  input.focus();
+  input.select();
+  el("rename-save").addEventListener("click", saveRename);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") saveRename();
+    if (e.key === "Escape") renderDetailHead(state.detailCluster);
+  });
+}
+
+async function saveRename() {
+  const cluster = state.detailCluster;
+  const name = el("rename-input").value.trim();
+  try {
+    const response = await fetch(
+      `/api/climbs/clusters/${encodeURIComponent(cluster.cluster_id)}/name`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Session-Id": state.sessionId },
+        body: JSON.stringify({ name }),
+      }
+    );
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || "Umbenennen fehlgeschlagen.");
+    cluster.name = body.name;
+    renderDetailHead(cluster);
+    refreshClusterOptions(); // reflect the new name in the dropdown
+  } catch (err) {
+    if (err.sessionExpired) return backToUpload();
+    renderDetailHead(cluster);
+    showGlobalError(err.message);
+  }
+}
+
+async function refreshClusterOptions() {
+  await load("/api/climbs/clusters", activeParams(), renderClusterOptions, "table-climbs");
 }
 
 function renderTable(containerId, columns, rows, emptyText) {
