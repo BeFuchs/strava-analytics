@@ -1,7 +1,8 @@
 """Group repeated efforts up the same hill into stable climb clusters.
 
-Builds on the pairwise matching from ``metrics.climbs`` (same start radius and
-length/gain tolerances) but produces persistent cluster objects: efforts are
+Builds on the pairwise matching from ``metrics.climbs`` (same start radius,
+length/gain tolerances widened by absolute noise floors) but produces
+persistent cluster objects: efforts are
 walked chronologically and matched against a running cluster representative —
 the member median of start coordinate, length and gain. Median instead of mean
 so a single GPS outlier cannot drag the representative away from the hill.
@@ -33,6 +34,15 @@ from ride_analytics.metrics.climbs import (
 # enough that re-parsing the same rides cannot flip the ID through jitter.
 ID_COORD_DECIMALS = 3
 ID_LENGTH_STEP_M = 100
+
+# Absolute floors for the ±15 % tolerances. On small climbs the relative
+# tolerance drops below the measurement noise and split a verified real-world
+# climb into two clusters: gain noise is barometric (~tens of meters missing),
+# length varies with where detection cuts the climb — gaps up to 200 m are
+# merged (``MAX_GAP_LENGTH_M``), so boundaries legitimately differ by that much
+# between rides of the same hill.
+GAIN_TOLERANCE_FLOOR_M = 20.0
+LENGTH_TOLERANCE_FLOOR_M = 250.0
 
 
 @dataclass(frozen=True)
@@ -100,16 +110,20 @@ def _best_match(states: list[_ClusterState], climb: Climb) -> _ClusterState | No
         distance = haversine_m(climb.start_lat, climb.start_lon, state.rep_lat, state.rep_lon)
         if distance > MATCH_START_RADIUS_M or distance >= best_distance:
             continue
-        if not _within(climb.length_m, state.rep_length_m, MATCH_LENGTH_TOLERANCE):
+        if not _within(
+            climb.length_m, state.rep_length_m, MATCH_LENGTH_TOLERANCE, LENGTH_TOLERANCE_FLOOR_M
+        ):
             continue
-        if not _within(climb.elevation_gain_m, state.rep_gain_m, MATCH_GAIN_TOLERANCE):
+        if not _within(
+            climb.elevation_gain_m, state.rep_gain_m, MATCH_GAIN_TOLERANCE, GAIN_TOLERANCE_FLOOR_M
+        ):
             continue
         best, best_distance = state, distance
     return best
 
 
-def _within(a: float, b: float, tolerance: float) -> bool:
-    return abs(a - b) <= tolerance * max(a, b)
+def _within(a: float, b: float, tolerance: float, floor: float) -> bool:
+    return abs(a - b) <= max(tolerance * max(a, b), floor)
 
 
 class _ClusterState:

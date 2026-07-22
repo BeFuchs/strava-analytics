@@ -92,6 +92,26 @@ def test_length_beyond_tolerance_splits():
     assert len(cluster_climbs(efforts(a, b))) == 2
 
 
+def test_small_gain_difference_within_floor_matches():
+    # 65 vs 77 m is >15 % apart but within the 20 m barometric-noise floor.
+    a = make_climb(T0, length_m=1300.0, gain_m=65.0)
+    b = make_climb(T0 + timedelta(days=1), length_m=1150.0, gain_m=77.0)
+    assert len(cluster_climbs(efforts(a, b))) == 1
+
+
+def test_length_difference_within_floor_matches():
+    # 1341 vs 1130 m is >15 % apart but within the 250 m detection-cut floor.
+    a = make_climb(T0, length_m=1341.0, gain_m=65.0)
+    b = make_climb(T0 + timedelta(days=1), length_m=1130.0, gain_m=77.0)
+    assert len(cluster_climbs(efforts(a, b))) == 1
+
+
+def test_large_gain_difference_beyond_tolerance_splits():
+    a = make_climb(T0, length_m=5000.0, gain_m=300.0)
+    b = make_climb(T0 + timedelta(days=1), length_m=5000.0, gain_m=360.0)
+    assert len(cluster_climbs(efforts(a, b))) == 2
+
+
 def test_nearest_cluster_wins_on_multiple_matches():
     a = make_climb(T0)
     b = make_climb(T0 + timedelta(days=1), lat=LAT0 + lat_offset(390.0))
