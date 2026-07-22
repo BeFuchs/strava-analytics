@@ -18,6 +18,10 @@ Strava tightened its API terms in 2026: API data may not be fed into AI models, 
 - Mean-maximal power curve (5 s to 60 min) per ride and across the whole history, with an FTP estimate from the best 20-min effort
 - Performance Management Chart: CTL, ATL and TSB as a day-continuous series
 - Time in Coggan power zones (7) and heart-rate zones (5)
+- Durability analysis: power curves split by accumulated work (0–1000 / 1000–2000 / 2000–3000 / 3000+ kJ) with a durability index per window — how much power you lose once fatigue sets in
+- Automatic climb detection from elevation data, no Strava segments needed: length, gain, gradients, VAM, W/kg, pacing quarters, and matching of repeated climbs with personal bests
+- Period comparison (`compare`): any two date ranges or `--preset last-two-seasons`, with per-week normalization when the periods differ in length
+- CSV export of every computed metric (`--export-csv`) for further analysis in Excel/Sheets
 - One self-contained HTML report with interactive Plotly charts (works without internet), plus an optional terminal summary
 
 ## Install
@@ -38,10 +42,17 @@ pip install -e .
 3. **Run the analysis:**
 
 ```bash
-ride-analytics analyze path/to/activities --report report.html --summary
+ride-analytics analyze path/to/activities --report report.html --summary --export-csv csv/
 ```
 
-`analyze` accepts a single `.fit` file or a folder. `--summary` prints a per-ride table to the terminal; the HTML report is written either way.
+`analyze` accepts a single `.fit` file or a folder. `--summary` prints a per-ride table to the terminal, `--export-csv` writes all metrics as CSV files; the HTML report is written either way.
+
+To compare two seasons or arbitrary date ranges:
+
+```bash
+ride-analytics compare path/to/activities --preset last-two-seasons --report compare.html
+ride-analytics compare path/to/activities --period-a 2025-01-01:2025-06-30 --period-b 2026-01-01:2026-06-30
+```
 
 ## The numbers, briefly
 
@@ -58,6 +69,14 @@ ride-analytics analyze path/to/activities --report report.html --summary
 **TSB (Training Stress Balance)** is yesterday's CTL minus yesterday's ATL, a proxy for form. Negative values mean you are carrying fatigue; positive values mean you are fresh, at the cost of losing fitness if it stays positive too long.
 
 **Variability Index (VI)** is NP divided by average power. A steady time trial sits near 1.0; a criterium or group ride sits well above.
+
+**Durability** is how much power you still produce after work has piled up. Each ride is split by accumulated work into kJ buckets, and the best efforts are computed inside each bucket separately, so your fresh 20-min best and your 20-min best after 2,000 kJ become two different numbers. The durability index compares each bucket to the fresh one: 0.85 means 15 % of your power is gone at that depth of fatigue — a dimension Strava doesn't show at all.
+
+![Durability section](docs/durability-screenshot.png)
+
+*Durability section of the report: one power curve per kJ bucket; the gap between the curves is fatigue resistance.*
+
+**VAM (Vertical Ascent Metres per hour)** is climbing speed measured vertically: elevation gain divided by climbing time. It makes climbs of different length and gradient directly comparable — a steady club rider climbs at 700–900 m/h, pro race pace on a mountain pass is 1,500+.
 
 ## Troubleshooting
 
@@ -79,6 +98,10 @@ pip install -e .
 
 To avoid this permanently, keep the project outside any cloud-synced directory.
 
+## Climb detection
+
+Climbs are detected from the smoothed barometric altitude alone — no Strava segments needed. A stretch counts as a climb when it averages **at least 3 % gradient, gains at least 30 m and runs at least 500 m**. These thresholds are deliberate: 3 % is where climbing starts to dominate the power demand, 30 m filters out highway ramps and railway bridges, and 500 m keeps every short kicker from flooding the list. Short flat or downhill pieces inside a climb (under 200 m or 30 s) don't end it — a hairpin road with flat corners is one climb, not twenty. Repeated climbs are matched by start location (haversine) and similar length and gain, which yields personal bests and a time trend per climb.
+
 ## Architecture
 
 ```
@@ -89,8 +112,13 @@ src/ride_analytics/
 ├── metrics/
 │   ├── single_ride.py  # NP, IF, TSS, VI, kJ, moving/elapsed time
 │   ├── power_curve.py  # mean-maximal power + FTP estimate
+│   ├── durability.py   # power curves per kJ bucket + durability index
+│   ├── climbs.py       # climb detection, VAM, repeated-climb matching
+│   ├── comparison.py   # two-period aggregation and deltas
 │   ├── pmc.py          # CTL / ATL / TSB time series
 │   └── zones.py        # power & HR zone distributions
+├── export/
+│   └── csv_export.py   # all computed metrics as CSV files
 └── report/
     ├── builder.py      # data model + Plotly figures + template rendering
     └── templates/      # self-contained HTML report
@@ -105,10 +133,10 @@ pytest && ruff check
 
 ## Future work
 
-- Route and elevation analysis (GPS data is parsed-ready in the FIT records)
+- Training plan suggestions derived from the PMC
 - Multi-sport support beyond cycling
 - W' balance and other advanced power models
-- Training plan suggestions derived from the PMC
+- Route map rendering (would need external map tiles; the elevation profile stays the default)
 
 ## About
 
