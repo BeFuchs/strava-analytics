@@ -65,9 +65,69 @@
   tbody tr:last-child { border-bottom: none; }
   td.source { color: var(--ink-2); font-size: 13px; }
   .footnote { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  .index-table { width: auto; min-width: 50%; }
+  td.pos { color: #178a61; }
+  td.neg { color: #cf5527; }
 </style>
 </head>
 <body>
+{% if comparison %}
+<main>
+  <header>
+    <h1>Ride Analytics — Period Comparison</h1>
+    <p>generated {{ generated }} · FTP {{ config.ftp_watts }} W ({{ ftp_wkg }} W/kg)</p>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><div class="label">Period A</div><div class="value" style="font-size:16px">{{ period_a_label }}</div></div>
+    <div class="tile"><div class="label">Period B</div><div class="value" style="font-size:16px">{{ period_b_label }}</div></div>
+  </div>
+
+  <section>
+    <h2>Side by side</h2>
+    <p class="section-note">
+      Δ is period B minus period A.
+      {% if not comparison.equal_length %}The periods differ in length — rows marked * are normalized per week; compare those, not the absolute totals.{% endif %}
+    </p>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Metric</th><th>Period A</th><th>Period B</th><th>Δ</th></tr>
+        </thead>
+        <tbody>
+          {% for row in comparison_rows %}
+          <tr>
+            <td style="text-align:left">{{ row.metric }}</td>
+            <td>{{ row.a }}</td>
+            <td>{{ row.b }}</td>
+            <td class="{{ row.trend }}">{{ row.delta }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Power curve</h2>
+    <p class="section-note">Best average power per window, each period aggregated separately.</p>
+    <div class="card">
+      {% if comparison_curves_div %}{{ comparison_curves_div | safe }}{% else %}<p class="empty">No power data in either period.</p>{% endif %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Time in zones</h2>
+    <p class="section-note">Share of riding time per zone, period A vs. period B.</p>
+    <div class="card">
+      {% if comparison_power_zones_div %}{{ comparison_power_zones_div | safe }}{% else %}<p class="empty">Power zones need power data in both periods.</p>{% endif %}
+    </div>
+    <div class="card" style="margin-top: 12px;">
+      {% if comparison_hr_zones_div %}{{ comparison_hr_zones_div | safe }}{% else %}<p class="empty">HR zones need heart-rate data in both periods.</p>{% endif %}
+    </div>
+  </section>
+</main>
+{% else %}
 <main>
   <header>
     <h1>Ride Analytics — Training Report</h1>
@@ -101,6 +161,35 @@
   </section>
 
   <section>
+    <h2>Durability</h2>
+    <p class="section-note">
+      Best power after 0–1000, 1000–2000, 2000–3000 and 3000+ kJ of accumulated work.
+      The gap between the curves is your fatigue resistance; the table shows each bucket
+      relative to fresh (1.00 = no fade).
+    </p>
+    <div class="card">
+      {% if durability_div %}{{ durability_div | safe }}{% else %}<p class="empty">Durability needs rides with power data.</p>{% endif %}
+    </div>
+    {% if durability_index %}
+    <div class="card" style="margin-top: 12px;">
+      <table class="index-table">
+        <thead>
+          <tr><th>Window</th>{% for bucket in durability_index.buckets %}<th>{{ bucket }}</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+          {% for row in durability_index.rows %}
+          <tr>
+            <td style="text-align:left">{{ row.window }}</td>
+            {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+  <section>
     <h2>Time in zones</h2>
     <p class="section-note">Share of riding time per power zone (Coggan, %FTP) and heart-rate zone (%threshold HR).</p>
     <div class="card">
@@ -109,6 +198,58 @@
     <div class="card" style="margin-top: 12px;">
       {% if hr_zones_div %}{{ hr_zones_div | safe }}{% else %}<p class="empty">No heart-rate data in this export.</p>{% endif %}
     </div>
+  </section>
+
+  <section>
+    <h2>Climbs</h2>
+    <p class="section-note">
+      {{ n_climbs }} climbs detected (≥3 % avg gradient, ≥30 m gain, ≥500 m long) —
+      the {{ climb_rows | length }} biggest by elevation gain.
+    </p>
+    <div class="card">
+      {% if climb_rows %}
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>km</th><th>Gain (m)</th><th>Avg %</th><th>Max %</th>
+            <th>Time</th><th>VAM</th><th>Ø W</th><th>W/kg</th><th>Pacing ¼ (W)</th><th>kJ before</th><th>Efforts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in climb_rows %}
+          <tr>
+            <td style="text-align:left">{{ row.date }}</td>
+            <td>{{ row.length }}</td>
+            <td>{{ row.gain }}</td>
+            <td>{{ row.avg_grad }}</td>
+            <td>{{ row.max_grad }}</td>
+            <td>{{ row.time }}</td>
+            <td>{{ row.vam }}</td>
+            <td>{{ row.avg_power }}</td>
+            <td>{{ row.wkg }}</td>
+            <td>{{ row.pacing }}</td>
+            <td>{{ row.kj_before }}</td>
+            <td>{{ row.efforts }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="empty">No climbs detected — rides carry no altitude/distance data, or the terrain is flat.</p>
+      {% endif %}
+    </div>
+    {% if profile_div %}
+    <div class="card" style="margin-top: 12px;">
+      <p class="section-note" style="margin: 4px 0 0 8px;">Latest ride with climbs: {{ profile_caption }} — climbs highlighted.</p>
+      {{ profile_div | safe }}
+    </div>
+    {% endif %}
+    {% if evolution_div %}
+    <div class="card" style="margin-top: 12px;">
+      <p class="section-note" style="margin: 4px 0 0 8px;">Repeated climbs — time per effort over the season.</p>
+      {{ evolution_div | safe }}
+    </div>
+    {% endif %}
   </section>
 
   <section>
@@ -142,6 +283,7 @@
     </div>
   </section>
 </main>
+{% endif %}
 <script>
   // Minimal column sort: numeric where possible, else text; duration hh:mm:ss aware.
   document.querySelectorAll("#rides thead th").forEach((th, col) => {
