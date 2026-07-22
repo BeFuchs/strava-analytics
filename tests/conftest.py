@@ -45,11 +45,14 @@ _RECORD_FIELDS = {
     "cadence": (4, 1, 0x02),
     "speed": (6, 2, 0x84),
     "altitude": (2, 2, 0x84),
+    "enhanced_altitude": (78, 4, 0x86),
     "distance": (5, 4, 0x86),
+    "position_lat": (0, 4, 0x85),
+    "position_long": (1, 4, 0x85),
 }
 
-_PACK_FMT = {1: "<B", 2: "<H", 4: "<I"}
-_INVALID = {0x00: 0xFF, 0x02: 0xFF, 0x84: 0xFFFF, 0x86: 0xFFFFFFFF}
+_PACK_FMT = {0x00: "<B", 0x02: "<B", 0x84: "<H", 0x85: "<i", 0x86: "<I"}
+_INVALID = {0x00: 0xFF, 0x02: 0xFF, 0x84: 0xFFFF, 0x85: 0x7FFFFFFF, 0x86: 0xFFFFFFFF}
 
 
 def _crc16(data: bytes, crc: int = 0) -> int:
@@ -74,9 +77,9 @@ def _definition(local_type: int, global_num: int, fields: list[tuple[int, int, i
 
 def _data(local_type: int, fields: list[tuple[int, int, int]], values: list[int | None]) -> bytes:
     out = bytes([local_type])
-    for (_, size, base), value in zip(fields, values, strict=True):
+    for (_, _, base), value in zip(fields, values, strict=True):
         raw = _INVALID[base] if value is None else value
-        out += struct.pack(_PACK_FMT[size], raw)
+        out += struct.pack(_PACK_FMT[base], raw)
     return out
 
 
@@ -84,10 +87,12 @@ def _raw_record_value(name: str, value) -> int:
     """Convert a physical value to the raw on-wire integer (FIT scale/offset)."""
     if name == "speed":
         return round(value * 1000)  # m/s, scale 1000
-    if name == "altitude":
+    if name in ("altitude", "enhanced_altitude"):
         return round((value + 500) * 5)  # m, scale 5, offset 500
     if name == "distance":
         return round(value * 100)  # m, scale 100
+    if name in ("position_lat", "position_long"):
+        return round(value * 2**31 / 180)  # degrees -> semicircles
     return int(value)
 
 
