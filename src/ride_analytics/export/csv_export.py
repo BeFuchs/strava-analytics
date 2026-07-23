@@ -43,6 +43,38 @@ def export_csv(data: ReportData, weight_kg: float, out_dir: str | Path) -> list[
     return written
 
 
+def export_training_csv(
+    decoupling: pd.DataFrame,
+    intervals: pd.DataFrame,
+    classification: pd.DataFrame,
+    out_dir: str | Path,
+) -> list[Path]:
+    """Write the v4 training-analysis CSVs (decoupling, intervals, classification).
+
+    Frames come pre-shaped from their metric modules; this only applies the
+    shared CSV conventions (ISO dates, empty for missing) and rounds decoupling.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    decoupling = _iso_dates(decoupling)
+    if not decoupling.empty:
+        decoupling = decoupling.round({"ef": 3, "decoupling_pct": 1, "cardiac_drift_bpm_per_h": 1})
+    return [
+        _write(decoupling, out_dir / "decoupling.csv"),
+        _write(_iso_dates(intervals), out_dir / "intervals.csv"),
+        _write(_iso_dates(classification), out_dir / "classification.csv"),
+    ]
+
+
+def _iso_dates(frame: pd.DataFrame) -> pd.DataFrame:
+    """Format a datetime ``date`` column as ISO ``YYYY-MM-DD``."""
+    if "date" in frame.columns and pd.api.types.is_datetime64_any_dtype(frame["date"]):
+        frame = frame.copy()
+        frame["date"] = frame["date"].dt.strftime("%Y-%m-%d")
+    return frame
+
+
 def _write(frame: pd.DataFrame, path: Path) -> Path:
     frame.to_csv(path, index=False, encoding="utf-8", na_rep="")
     return path

@@ -206,3 +206,48 @@ def test_durability_csv_columns(tmp_path, report_data):
     ]
     fresh = [r for r in rows if r["bucket"] == "0-1000 kJ" and r["window_s"] == "1200"]
     assert float(fresh[0]["mmp_watts"]) == pytest.approx(200.0)
+
+
+def test_export_training_csv_writes_three_files(tmp_path):
+    from ride_analytics.export.csv_export import export_training_csv
+
+    decoupling = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-01", "2026-05-03"]),
+            "ef": [1.6123, None],
+            "decoupling_pct": [3.456, None],
+            "cardiac_drift_bpm_per_h": [1.23, None],
+            "valid": [True, False],
+            "reason": [None, "Fahrt unter 60 Minuten"],
+        }
+    )
+    intervals = pd.DataFrame(
+        {
+            "ride_id": ["r1", "r1"],
+            "date": ["2026-05-01", "2026-05-01"],
+            "set_index": [0, 0],
+            "rep_index": [0, 1],
+            "avg_power_watts": [275.0, 273.0],
+        }
+    )
+    classification = pd.DataFrame(
+        {
+            "ride_id": ["r1"],
+            "date": ["2026-05-01"],
+            "ride_type": ["intervals"],
+            "confidence": ["high"],
+            "matched_rules": ["4er-Set, 20 min über Schwelle"],
+        }
+    )
+
+    written = export_training_csv(decoupling, intervals, classification, tmp_path)
+    assert {p.name for p in written} == {"decoupling.csv", "intervals.csv", "classification.csv"}
+
+    dec_rows = read_rows(tmp_path / "decoupling.csv")
+    assert dec_rows[0]["date"] == "2026-05-01"  # datetime -> ISO
+    assert dec_rows[0]["ef"] == "1.612"  # rounded to 3 dp
+    assert dec_rows[1]["ef"] == ""  # missing stays empty, not 0
+
+    cls_rows = read_rows(tmp_path / "classification.csv")
+    assert cls_rows[0]["ride_type"] == "intervals"
+    assert cls_rows[0]["confidence"] == "high"
