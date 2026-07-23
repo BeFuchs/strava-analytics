@@ -49,9 +49,15 @@ RACE_MIN_IF = 0.85
 RACE_MIN_DURATION_S = 3600.0
 RACE_MIN_VI = 1.15
 
-# Intervals: at least one repeated set plus enough total time above the interval
-# threshold that it reads as a workout, not a couple of climbs.
+# Intervals: a genuine workout, not a long ride with a few climbs. Requires a
+# real repeated set (≥ 3 reps — two similar climbs don't count), a cap on
+# duration (multi-hour rides are endurance, whatever efforts they contain), and
+# enough total time above the interval threshold. The ≥ 3-rep bar and the
+# duration cap were set after checking real rides: with ≥ 2 reps and no cap,
+# most long endurance rides fell here by accident.
 INTERVAL_MIN_TIME_OVER_THRESHOLD_S = 480.0  # 8 min
+INTERVAL_MIN_SET_REPS = 3
+INTERVAL_MAX_DURATION_S = 9000.0  # 150 min
 
 # Threshold / sweetspot: a long continuous block in the 84–105 % FTP band with
 # no repeated-set structure.
@@ -60,11 +66,15 @@ THRESHOLD_MIN_CONTIG_S = 1200.0  # 20 min
 # Coasting into a corner shouldn't break the block — smooth before banding.
 THRESHOLD_SMOOTH_S = 30
 
-# Endurance: most of the ride easy, steady power.
-BASE_MIN_ZONE1_2_PCT = 70.0
+# Endurance: most of the ride easy, steady power. Thresholds loosened from a
+# textbook 70 %/1.15 after checking real rides: in hilly terrain long climbs
+# push time into Zone 3 and lift VI, so genuine endurance rides sit around
+# 55–70 % Z1–2 and VI 1.1–1.2. The stricter values dumped most long rides into
+# "other".
+BASE_MIN_ZONE1_2_PCT = 60.0
 LONG_BASE_MIN_DURATION_S = 9000.0  # 150 min
-LONG_BASE_MAX_VI = 1.10
-BASE_MAX_VI = 1.15
+LONG_BASE_MAX_VI = 1.20
+BASE_MAX_VI = 1.25
 
 # Commute: short, stop-and-go, low distance.
 COMMUTE_MAX_DURATION_S = 3600.0
@@ -114,16 +124,21 @@ def _classify_by_power(
     vi = metrics.variability_index or 0.0
     if_factor = metrics.intensity_factor or 0.0
     zone1_2 = _zone1_2_pct(power_zone_distribution(df, config))
-    has_set = any(s.reps >= 2 for s in interval_sets)
+    has_set = any(s.reps >= 2 for s in interval_sets)  # any repeat, for the threshold gate
+    is_workout = any(s.reps >= INTERVAL_MIN_SET_REPS for s in interval_sets)
     time_over = _time_over_fraction_s(df, config, 0.88)
 
     if if_factor >= RACE_MIN_IF and duration >= RACE_MIN_DURATION_S and vi >= RACE_MIN_VI:
         conf = "high" if if_factor >= 0.90 and vi >= 1.20 else "medium"
         return RideClassification(RACE, conf, f"IF {if_factor:.2f}, VI {vi:.2f}, ≥60 min")
 
-    if has_set and time_over >= INTERVAL_MIN_TIME_OVER_THRESHOLD_S:
+    if (
+        is_workout
+        and duration <= INTERVAL_MAX_DURATION_S
+        and time_over >= INTERVAL_MIN_TIME_OVER_THRESHOLD_S
+    ):
         max_reps = max(s.reps for s in interval_sets)
-        conf = "high" if max_reps >= 3 and time_over >= 720 else "medium"
+        conf = "high" if time_over >= 720 else "medium"
         return RideClassification(
             INTERVALS, conf, f"{max_reps}er-Set, {time_over / 60:.0f} min über Schwelle"
         )
